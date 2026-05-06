@@ -1,0 +1,13 @@
+# Shared JDBC drivers for the corporate MSR base image.
+#
+# This directory is empty in source control. CI populates it from the
+# corporate artifact repository before invoking `docker build` so that
+# the resulting wm-msr-base image contains the Oracle / Postgres /
+# MSSQL drivers that downstream microservices share.
+#
+# Drivers placed here land at runtime under:
+#   /opt/softwareag/IntegrationServer/instances/default/packages/
+#     WmJDBCAdapter/code/jars
+#
+# Do not commit binary JARs to git -- they are licensed and version
+# controlled in the artifact repository, not here.

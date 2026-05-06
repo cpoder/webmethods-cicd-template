@@ -1,0 +1,6 @@
+# Keep build context clean -- placeholders and editor noise should
+# never end up baked into the runtime image.
+**/.gitkeep
+**/.DS_Store
+**/.idea
+**/*.swp
