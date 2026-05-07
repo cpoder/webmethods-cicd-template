@@ -1,0 +1,17 @@
+# IS Global Variables - dev sparse overlay.
+# Only overrides; everything not listed here inherits from config/base/.
+# Identity field: variables[].key (overlay entries with the same key win;
+# new keys are appended). See docs/config-merge.md.
+
+variables:
+  - key: LOG_LEVEL
+    value: DEBUG
+    description: Verbose logging in dev for development convenience.
+
+  - key: TRACE_SAMPLING_RATIO
+    value: 1.0
+    description: Sample every trace in dev.
+
+  - key: DEV_FEATURE_FLAGS
+    value: "experimental.retry,bulk.import"
+    description: Comma-separated dev-only feature flags (additive key).

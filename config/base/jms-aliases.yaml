@@ -1,0 +1,22 @@
+# JMS aliases - base layer.
+# Maps webMethods JMS aliases to a provider + broker URL + connection factory.
+# Validated against $defs/JmsAliases in schemas/config.schema.json.
+
+aliases:
+  - alias: umDefault
+    provider: UM
+    broker_url: "nsp://${UM_HOST}:${UM_PORT}"
+    connection_factory: ConnectionFactory
+    user: wm_jms
+    password_secret_ref: vault://kv/data/wm/order-processing/jms/um/password
+    transactional: true
+    description: Universal Messaging primary realm for order events.
+
+  - alias: legacyMq
+    provider: WebSphereMQ
+    broker_url: "tcp://${MQ_HOST}:${MQ_PORT}"
+    connection_factory: WMQ_CF
+    client_id: order-processing-legacy
+    user: wm_legacy
+    password_secret_ref: vault://kv/data/wm/order-processing/jms/mq/password
+    description: Legacy MQ link for backwards-compatibility traffic.

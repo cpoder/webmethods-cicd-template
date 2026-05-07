@@ -1,0 +1,30 @@
+# JDBC connection pool definitions - base layer.
+# `url_template` may include ${VAR} placeholders that are substituted at apply
+# time from environment-resolved Global Variables. Passwords are never inlined;
+# they are pulled from `password_secret_ref` at apply time.
+# Validated against $defs/JdbcPools in schemas/config.schema.json.
+
+pools:
+  - alias: ordersDb
+    driver: oracle.jdbc.OracleDriver
+    url_template: "jdbc:oracle:thin:@//${ORDERS_DB_HOST}:${ORDERS_DB_PORT}/${ORDERS_DB_SERVICE}"
+    user: wm_orders_app
+    password_secret_ref: vault://kv/data/wm/order-processing/db/orders/password
+    min_connections: 2
+    max_connections: 20
+    idle_timeout_seconds: 300
+    connection_timeout_ms: 5000
+    validation_query: SELECT 1 FROM dual
+    auto_commit: false
+    transaction_isolation: READ_COMMITTED
+    description: Primary Orders OLTP database.
+
+  - alias: auditDb
+    driver: org.postgresql.Driver
+    url_template: "jdbc:postgresql://${AUDIT_DB_HOST}:${AUDIT_DB_PORT}/${AUDIT_DB_NAME}"
+    user: wm_audit_app
+    password_secret_ref: vault://kv/data/wm/order-processing/db/audit/password
+    min_connections: 1
+    max_connections: 5
+    validation_query: SELECT 1
+    description: Append-only audit store.

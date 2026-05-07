@@ -1,0 +1,63 @@
+name: Validate Config Schema
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'config/**'
+      - 'schemas/**'
+      - 'scripts/validate-config.sh'
+      - 'scripts/lib/validate-config.py'
+      - '.github/workflows/config-validate.yml'
+  pull_request:
+    paths:
+      - 'config/**'
+      - 'schemas/**'
+      - 'scripts/validate-config.sh'
+      - 'scripts/lib/validate-config.py'
+      - '.github/workflows/config-validate.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install validators
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml jsonschema
+
+      - name: Install yq (mikefarah)
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Validate config against schema
+        run: ./scripts/validate-config.sh
+
+      - name: Negative-test - unknown top-level key must fail
+        run: |
+          mkdir -p /tmp/cfgneg
+          cat > /tmp/cfgneg/global-variables.yaml <<'YAML'
+          variables:
+            - key: OK
+              value: yes
+          unknown_top_level_key: should-fail
+          YAML
+          if ./scripts/validate-config.sh /tmp/cfgneg/global-variables.yaml; then
+            echo "::error::Negative test passed unexpectedly - schema is not catching unknown top-level keys"
+            exit 1
+          fi
+          echo "Negative test correctly rejected unknown top-level key."

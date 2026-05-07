@@ -1,0 +1,26 @@
+# IS Global Variables - base layer.
+# Plain key/value pairs are inlined; entries with `secret: true` are resolved
+# from `secret_ref` at apply time (Vault, GitHub Secrets, Kubernetes Secret).
+# Validated against $defs/GlobalVariables in schemas/config.schema.json.
+
+variables:
+  - key: SERVICE_NAME
+    value: order-processing
+    description: Logical service identifier surfaced in logs and traces.
+
+  - key: LOG_LEVEL
+    value: INFO
+    description: Default IS server log level.
+
+  - key: HTTP_TIMEOUT_MS
+    value: 30000
+    description: Default outbound HTTP timeout in milliseconds.
+
+  - key: TRACE_SAMPLING_RATIO
+    value: 0.1
+    description: OTel trace sampling ratio (0.0..1.0).
+
+  - key: API_TOKEN
+    secret: true
+    secret_ref: vault://kv/data/wm/order-processing/api_token
+    description: Bearer token for the upstream Orders API.

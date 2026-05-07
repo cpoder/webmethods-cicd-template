@@ -1,0 +1,28 @@
+# Non-secret user and group definitions - base layer.
+# Passwords are NEVER inlined here. `password_secret_ref` is resolved at apply
+# time from Vault / GitHub Secrets / Kubernetes Secret.
+# Validated against $defs/UsersAndGroups in schemas/config.schema.json.
+
+groups:
+  - name: administrators
+    description: Full admin access; restricted to break-glass identities.
+  - name: developers
+    description: Read-mostly access; can deploy to non-prod.
+  - name: operators
+    description: Operational access (view, restart, drain).
+  - name: partners
+    description: External partner identities.
+  - name: anonymous
+    description: Unauthenticated callers (public endpoints only).
+  - name: blocked
+    description: Identities explicitly denied access.
+
+users:
+  - username: wm-deploy-bot
+    groups: [developers]
+    password_secret_ref: vault://kv/data/wm/order-processing/users/wm-deploy-bot
+    description: CI/CD deployment service account.
+  - username: wm-ops-bot
+    groups: [operators]
+    password_secret_ref: vault://kv/data/wm/order-processing/users/wm-ops-bot
+    description: Runbook automation service account.

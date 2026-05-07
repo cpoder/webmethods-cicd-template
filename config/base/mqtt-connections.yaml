@@ -1,0 +1,14 @@
+# MQTT connections - base layer.
+# Validated against $defs/MqttConnections in schemas/config.schema.json.
+
+connections:
+  - alias: iotIngest
+    broker_url: "ssl://${MQTT_HOST}:${MQTT_PORT}"
+    client_id: order-processing-iot
+    user: wm_iot
+    password_secret_ref: vault://kv/data/wm/order-processing/mqtt/password
+    qos: 1
+    keep_alive_seconds: 60
+    clean_session: false
+    ssl_truststore_secret_ref: vault://kv/data/wm/order-processing/mqtt/truststore
+    description: IoT telemetry ingestion broker.

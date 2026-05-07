@@ -1,0 +1,14 @@
+# Kafka connections - base layer.
+# Validated against $defs/KafkaConnections in schemas/config.schema.json.
+
+connections:
+  - alias: eventsCluster
+    bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+    security_protocol: SASL_SSL
+    sasl_mechanism: SCRAM-SHA-512
+    sasl_username: wm_events
+    sasl_password_secret_ref: vault://kv/data/wm/order-processing/kafka/events/password
+    ssl_truststore_secret_ref: vault://kv/data/wm/order-processing/kafka/truststore
+    consumer_group: order-processing-events
+    client_id: order-processing
+    description: Primary Kafka cluster for domain events.

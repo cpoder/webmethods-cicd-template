@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cpoder/wmcicd/schemas/config.schema.json",
+  "title": "webMethods MSR runtime configuration",
+  "description": "Master schema for declarative IS/MSR runtime configuration. Each YAML file under config/<env>/ is validated against one of the named definitions in $defs (selected by filename). Top-level keys not declared in the matching definition cause validation to fail (additionalProperties: false).",
+  "type": "object",
+  "oneOf": [
+    {"$ref": "#/$defs/GlobalVariables"},
+    {"$ref": "#/$defs/JdbcPools"},
+    {"$ref": "#/$defs/JmsAliases"},
+    {"$ref": "#/$defs/KafkaConnections"},
+    {"$ref": "#/$defs/MqttConnections"},
+    {"$ref": "#/$defs/Ports"},
+    {"$ref": "#/$defs/Acls"},
+    {"$ref": "#/$defs/UsersAndGroups"}
+  ],
+  "$defs": {
+    "GlobalVariables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variables"],
+      "properties": {
+        "variables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key"],
+            "properties": {
+              "key": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"},
+              "value": {"type": ["string", "number", "boolean", "null"]},
+              "secret": {"type": "boolean", "default": false},
+              "secret_ref": {"type": "string", "description": "Vault/GH-Secrets reference, e.g. 'vault://kv/data/wm/<key>' or 'env:WM_<KEY>'"},
+              "description": {"type": "string"}
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"secret": {"const": true}}, "required": ["secret"]},
+                "then": {"required": ["secret_ref"]}
+              }
+            ]
+          }
+        }
+      }
+    },
+
+    "JdbcPools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pools"],
+      "properties": {
+        "pools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["alias", "driver", "url_template", "password_secret_ref"],
+            "properties": {
+              "alias": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "driver": {"type": "string", "description": "JDBC driver class name, e.g. 'oracle.jdbc.OracleDriver'"},
+              "url_template": {"type": "string", "description": "JDBC URL with ${VAR} placeholders resolved at apply time"},
+              "user": {"type": "string"},
+              "password_secret_ref": {"type": "string"},
+              "min_connections": {"type": "integer", "minimum": 0, "default": 0},
+              "max_connections": {"type": "integer", "minimum": 1, "default": 10},
+              "idle_timeout_seconds": {"type": "integer", "minimum": 0},
+              "connection_timeout_ms": {"type": "integer", "minimum": 0},
+              "validation_query": {"type": "string"},
+              "auto_commit": {"type": "boolean", "default": true},
+              "transaction_isolation": {
+                "type": "string",
+                "enum": ["READ_UNCOMMITTED", "READ_COMMITTED", "REPEATABLE_READ", "SERIALIZABLE", "NONE"]
+              },
+              "description": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+
+    "JmsAliases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aliases"],
+      "properties": {
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["alias", "provider"],
+            "properties": {
+              "alias": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "provider": {
+                "type": "string",
+                "enum": ["UM", "ActiveMQ", "TIBCO", "WebSphereMQ", "Generic"]
+              },
+              "broker_url": {"type": "string"},
+              "connection_factory": {"type": "string"},
+              "destination_factory": {"type": "string"},
+              "user": {"type": "string"},
+              "password_secret_ref": {"type": "string"},
+              "client_id": {"type": "string"},
+              "transactional": {"type": "boolean", "default": false},
+              "description": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+
+    "KafkaConnections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connections"],
+      "properties": {
+        "connections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["alias", "bootstrap_servers"],
+            "properties": {
+              "alias": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "bootstrap_servers": {"type": "string", "description": "Comma-separated host:port list"},
+              "security_protocol": {
+                "type": "string",
+                "enum": ["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"],
+                "default": "PLAINTEXT"
+              },
+              "sasl_mechanism": {
+                "type": "string",
+                "enum": ["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512", "GSSAPI", "OAUTHBEARER"]
+              },
+              "sasl_username": {"type": "string"},
+              "sasl_password_secret_ref": {"type": "string"},
+              "ssl_truststore_secret_ref": {"type": "string"},
+              "ssl_keystore_secret_ref": {"type": "string"},
+              "consumer_group": {"type": "string"},
+              "client_id": {"type": "string"},
+              "description": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+
+    "MqttConnections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connections"],
+      "properties": {
+        "connections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["alias", "broker_url"],
+            "properties": {
+              "alias": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "broker_url": {"type": "string", "description": "tcp://host:port or ssl://host:port"},
+              "client_id": {"type": "string"},
+              "user": {"type": "string"},
+              "password_secret_ref": {"type": "string"},
+              "qos": {"type": "integer", "minimum": 0, "maximum": 2, "default": 1},
+              "keep_alive_seconds": {"type": "integer", "minimum": 0, "default": 60},
+              "clean_session": {"type": "boolean", "default": true},
+              "ssl_truststore_secret_ref": {"type": "string"},
+              "description": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+
+    "Ports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ports"],
+      "properties": {
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "protocol", "port"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "protocol": {"type": "string", "enum": ["http", "https"]},
+              "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+              "bind_address": {"type": "string", "default": "0.0.0.0"},
+              "primary": {"type": "boolean", "default": false},
+              "allowed_ips": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "CIDR or IP literal allow list; empty means allow all"
+              },
+              "denied_ips": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "keystore_alias": {"type": "string"},
+              "truststore_alias": {"type": "string"},
+              "client_auth": {
+                "type": "string",
+                "enum": ["none", "request", "require"],
+                "default": "none"
+              },
+              "threadpool_min": {"type": "integer", "minimum": 1},
+              "threadpool_max": {"type": "integer", "minimum": 1},
+              "description": {"type": "string"}
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"protocol": {"const": "https"}}, "required": ["protocol"]},
+                "then": {"required": ["keystore_alias"]}
+              }
+            ]
+          }
+        }
+      }
+    },
+
+    "Acls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acls"],
+      "properties": {
+        "acls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "allow_groups": {"type": "array", "items": {"type": "string"}},
+              "deny_groups": {"type": "array", "items": {"type": "string"}},
+              "default_action": {
+                "type": "string",
+                "enum": ["allow", "deny"],
+                "default": "deny"
+              },
+              "description": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+
+    "UsersAndGroups": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "users": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["username"],
+            "properties": {
+              "username": {"type": "string", "pattern": "^[A-Za-z0-9_.@-]+$"},
+              "groups": {"type": "array", "items": {"type": "string"}},
+              "password_secret_ref": {"type": "string", "description": "Required at apply time; never inline a password"},
+              "disabled": {"type": "boolean", "default": false},
+              "description": {"type": "string"}
+            }
+          }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "description": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

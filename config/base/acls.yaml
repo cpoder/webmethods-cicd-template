@@ -1,0 +1,27 @@
+# IS ACLs (Access Control Lists) - base layer.
+# Each ACL maps to allow/deny groups. `default_action` is what applies when no
+# group matches. Group names referenced here must exist in users-and-groups.yaml.
+# Validated against $defs/Acls in schemas/config.schema.json.
+
+acls:
+  - name: Internal
+    allow_groups:
+      - administrators
+      - developers
+      - operators
+    default_action: deny
+    description: Internal-only services (admin / dev tooling).
+
+  - name: Anonymous
+    allow_groups:
+      - anonymous
+    default_action: allow
+    description: Public health/readiness endpoints.
+
+  - name: PartnerAPI
+    allow_groups:
+      - partners
+    deny_groups:
+      - blocked
+    default_action: deny
+    description: External partner API surface.

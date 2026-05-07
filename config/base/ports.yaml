@@ -1,0 +1,37 @@
+# IS HTTP/HTTPS listener ports - base layer.
+# `allowed_ips` is a CIDR/IP allow list; empty (or absent) means allow all.
+# `keystore_alias` is required for protocol=https.
+# Validated against $defs/Ports in schemas/config.schema.json.
+
+ports:
+  - name: primary-http
+    protocol: http
+    port: 5555
+    primary: true
+    bind_address: 0.0.0.0
+    threadpool_min: 10
+    threadpool_max: 75
+    description: Default HTTP listener (cluster-internal only - blocked at ingress).
+    allowed_ips:
+      - 10.0.0.0/8
+
+  - name: external-https
+    protocol: https
+    port: 5443
+    bind_address: 0.0.0.0
+    keystore_alias: default-server-ks
+    truststore_alias: default-trust-ts
+    client_auth: none
+    threadpool_min: 5
+    threadpool_max: 50
+    description: External-facing HTTPS listener for partner integrations.
+
+  - name: admin-https
+    protocol: https
+    port: 5544
+    bind_address: 127.0.0.1
+    keystore_alias: admin-ks
+    client_auth: require
+    description: Admin port - localhost only, mTLS required.
+    allowed_ips:
+      - 127.0.0.1/32
