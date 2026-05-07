@@ -1,0 +1,21 @@
+# JDBC connection pools - test profile (additive).
+# Adds a Postgres pool aliased `testDb` that points at the docker-compose
+# Postgres sidecar. List-merge by `pools[].alias` (see docs/config-merge.md)
+# means this entry is appended to the base set; ordersDb / auditDb from the
+# base layer are unaffected (and unused by integration tests).
+# Validated against $defs/JdbcPools in schemas/config.schema.json.
+
+pools:
+  - alias: testDb
+    driver: org.postgresql.Driver
+    url_template: "jdbc:postgresql://${TEST_DB_HOST}:${TEST_DB_PORT}/${TEST_DB_NAME}"
+    user: testuser
+    password_secret_ref: env:DB_PASSWORD_TESTDB
+    min_connections: 1
+    max_connections: 5
+    idle_timeout_seconds: 60
+    connection_timeout_ms: 5000
+    validation_query: SELECT 1
+    auto_commit: false
+    transaction_isolation: READ_COMMITTED
+    description: Postgres sidecar for integration-test JDBC round trips.

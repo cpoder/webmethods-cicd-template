@@ -1,0 +1,12 @@
+# Kafka connections - test profile (additive).
+# Plain-text only because the Redpanda sidecar deliberately runs without
+# auth/TLS; production uses SASL_SSL via the base layer's `eventsCluster`.
+# Validated against $defs/KafkaConnections in schemas/config.schema.json.
+
+connections:
+  - alias: testCluster
+    bootstrap_servers: "${TEST_KAFKA_BOOTSTRAP_SERVERS}"
+    security_protocol: PLAINTEXT
+    consumer_group: integration-tests
+    client_id: wm-integration-tests
+    description: Redpanda sidecar for Kafka integration tests.

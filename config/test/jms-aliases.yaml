@@ -1,0 +1,15 @@
+# JMS aliases - test profile (additive).
+# `testQueue` points MSR at the ActiveMQ Artemis sidecar. The provider is
+# Generic (1.1) so a single alias covers any JMS-1.1 broker we swap in
+# later; the MSR-side library wiring is part of the base image.
+# Validated against $defs/JmsAliases in schemas/config.schema.json.
+
+aliases:
+  - alias: testQueue
+    provider: Generic
+    broker_url: "tcp://${TEST_JMS_HOST}:${TEST_JMS_PORT}"
+    connection_factory: ConnectionFactory
+    user: testuser
+    password_secret_ref: env:JMS_PASSWORD_TESTQUEUE
+    transactional: false
+    description: Artemis sidecar for JMS produce/consume round trips.

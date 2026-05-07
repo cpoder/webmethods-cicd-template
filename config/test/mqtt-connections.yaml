@@ -1,0 +1,13 @@
+# MQTT connections - test profile (additive).
+# Plain `tcp://` to the Mosquitto sidecar's anonymous listener; production
+# uses TLS via the base layer's `iotIngest` alias.
+# Validated against $defs/MqttConnections in schemas/config.schema.json.
+
+connections:
+  - alias: testBroker
+    broker_url: "tcp://${TEST_MQTT_HOST}:${TEST_MQTT_PORT}"
+    client_id: wm-integration-tests
+    qos: 1
+    keep_alive_seconds: 30
+    clean_session: true
+    description: Mosquitto sidecar for MQTT integration tests.

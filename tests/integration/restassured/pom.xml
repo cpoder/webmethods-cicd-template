@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  tests/integration/restassured/pom.xml
+
+  REST-assured + JMS (Artemis) + JDBC (Postgres) + MQTT (Paho) +
+  Kafka (kafka-clients) integration tests against a running MSR plus
+  the sidecar stack defined in tests/integration/compose.yml.
+
+  Run from repo root:
+    mvn -f tests/integration/restassured/pom.xml \
+        -Dmsr.base.url=http://localhost:15555 \
+        -Dpostgres.jdbc.url=jdbc:postgresql://localhost:15432/wm_test \
+        -Dartemis.url=tcp://localhost:61616 \
+        -Dmqtt.url=tcp://localhost:11883 \
+        -Dkafka.bootstrap=localhost:19092 \
+        verify
+
+  Surefire emits JUnit XML to target/surefire-reports/. The driver in
+  scripts/test-integration.sh copies that into reports/integration/.
+
+  Java 17 is the project minimum (matches versions.env JAVA_VERSION
+  and the test image's JDK). Keep dependency versions pinned; CI
+  reruns this offline against a Maven mirror, so SNAPSHOT or LATEST
+  refs would break the hermetic build.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.wmcicd.itests</groupId>
+    <artifactId>wm-msr-integration-tests</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>wm-msr Integration Tests</name>
+    <description>End-to-end tests driving a configured MSR through REST, SOAP, JMS, JDBC, MQTT and Kafka.</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+
+        <!-- Pinned versions. Bump deliberately; do not float. -->
+        <junit.version>5.10.2</junit.version>
+        <restassured.version>5.4.0</restassured.version>
+        <postgres.driver.version>42.7.3</postgres.driver.version>
+        <artemis.client.version>2.31.2</artemis.client.version>
+        <paho.version>1.2.5</paho.version>
+        <kafka.client.version>3.6.1</kafka.client.version>
+        <slf4j.version>2.0.13</slf4j.version>
+        <jackson.version>2.16.2</jackson.version>
+        <awaitility.version>4.2.1</awaitility.version>
+
+        <!-- Defaults match tests/integration/compose.yml. Override on
+             the mvn command line via -D for non-default ports.        -->
+        <msr.base.url>http://localhost:15555</msr.base.url>
+        <msr.admin.user>Administrator</msr.admin.user>
+        <msr.admin.password>manage</msr.admin.password>
+        <postgres.jdbc.url>jdbc:postgresql://localhost:15432/wm_test</postgres.jdbc.url>
+        <postgres.user>testuser</postgres.user>
+        <postgres.password>testpass</postgres.password>
+        <artemis.url>tcp://localhost:61616</artemis.url>
+        <artemis.user>testuser</artemis.user>
+        <artemis.password>testpass</artemis.password>
+        <mqtt.url>tcp://localhost:11883</mqtt.url>
+        <kafka.bootstrap>localhost:19092</kafka.bootstrap>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>${restassured.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>json-path</artifactId>
+            <version>${restassured.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>xml-path</artifactId>
+            <version>${restassured.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgres.driver.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jms-client</artifactId>
+            <version>${artemis.client.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.eclipse.paho</groupId>
+            <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
+            <version>${paho.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>${kafka.client.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <version>${awaitility.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>${slf4j.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <!-- Surface the system properties to the JVM so
+                         the test classes pick them up. Property names
+                         match the WmIntegrationProps reader.         -->
+                    <systemPropertyVariables>
+                        <msr.base.url>${msr.base.url}</msr.base.url>
+                        <msr.admin.user>${msr.admin.user}</msr.admin.user>
+                        <msr.admin.password>${msr.admin.password}</msr.admin.password>
+                        <postgres.jdbc.url>${postgres.jdbc.url}</postgres.jdbc.url>
+                        <postgres.user>${postgres.user}</postgres.user>
+                        <postgres.password>${postgres.password}</postgres.password>
+                        <artemis.url>${artemis.url}</artemis.url>
+                        <artemis.user>${artemis.user}</artemis.user>
+                        <artemis.password>${artemis.password}</artemis.password>
+                        <mqtt.url>${mqtt.url}</mqtt.url>
+                        <kafka.bootstrap>${kafka.bootstrap}</kafka.bootstrap>
+                    </systemPropertyVariables>
+                    <!-- Print test names + per-test duration; fail
+                         the build on first error so logs stay sane.  -->
+                    <trimStackTrace>false</trimStackTrace>
+                    <reportFormat>plain</reportFormat>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,22 @@
+# tests/integration/.gitignore
+#
+# The repo-root .gitignore blanket-ignores "*.xml" (it's there to
+# squelch IS work-dir / coverage detritus). That accidentally hides
+# the Maven pom.xml under restassured/, so we re-include it.
+#
+# Re-include rules only work when the parent directory is itself NOT
+# ignored. tests/integration/ is not ignored anywhere, so the
+# negations below lift these files out of the global ignore.
+
+!restassured/pom.xml
+
+# --- Maven build output --------------------------------------------
+restassured/target/
+
+# --- Per-developer convenience artifacts ---------------------------
+# Newman/k6 are usually invoked through scripts/test-integration.sh
+# which writes to <repo>/reports/integration/, but if a developer
+# runs them directly inside tests/integration/, ignore the spillover.
+*.har
+report.html
+summary.json

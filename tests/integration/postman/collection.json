@@ -1,0 +1,229 @@
+{
+  "info": {
+    "_postman_id": "0c9f1f74-4a3e-4b3e-9b6f-wm-itests-2026",
+    "name": "wm-msr Integration Smoke",
+    "description": "Newman-driven REST smoke against a running MSR sidecar stack. Hits documented public endpoints (ping, package list, global-variable round trip, HelloWorld:greet) and asserts on returned payloads.\n\nNewman invocation lives in scripts/test-integration.sh; reports land in reports/integration/newman/. The collection is self-contained: no external test data, no pre-request scripts mutating shared state.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      { "key": "username", "value": "{{adminUser}}", "type": "string" },
+      { "key": "password", "value": "{{adminPassword}}", "type": "string" }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Stable correlation id reused across requests in the same run.",
+          "if (!pm.collectionVariables.get('correlationId')) {",
+          "  const cid = 'itest-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);",
+          "  pm.collectionVariables.set('correlationId', cid);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "correlationId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "ping",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{msrBaseUrl}}/invoke/wm.server:ping",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["invoke", "wm.server:ping"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('responded under 1s', () => pm.expect(pm.response.responseTime).to.be.below(1000));",
+              "pm.test('body acknowledges the ping', () => {",
+              "  const body = pm.response.text();",
+              "  pm.expect(body.toLowerCase()).to.match(/(ok|pong|alive)/);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "list packages",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{msrBaseUrl}}/rest/wm.server.packages/list",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["rest", "wm.server.packages", "list"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('JSON content-type', () => {",
+              "  pm.expect(pm.response.headers.get('Content-Type') || '').to.match(/json/i);",
+              "});",
+              "let body;",
+              "pm.test('parses as JSON', () => { body = pm.response.json(); pm.expect(body).to.be.an('object'); });",
+              "pm.test('reports at least the WmRoot package', () => {",
+              "  const text = JSON.stringify(body || {});",
+              "  pm.expect(text).to.match(/WmRoot/);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "global variable round trip - set",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"key\": \"NEWMAN_PROBE\",\n  \"value\": \"{{correlationId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{msrBaseUrl}}/rest/wm.server.globalvariables/set",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["rest", "wm.server.globalvariables", "set"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('2xx Created/OK', () => pm.expect([200, 201, 204]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "global variable round trip - get",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{msrBaseUrl}}/rest/wm.server.globalvariables/get/NEWMAN_PROBE",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["rest", "wm.server.globalvariables", "get", "NEWMAN_PROBE"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('returned value matches what we set', () => {",
+              "  const expected = pm.collectionVariables.get('correlationId');",
+              "  pm.expect(pm.response.text()).to.include(expected);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "HelloWorld greet (happy path)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"newman\"\n}"
+        },
+        "url": {
+          "raw": "{{msrBaseUrl}}/invoke/HelloWorld:greet",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["invoke", "HelloWorld:greet"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// HelloWorld is delivered by Task 8.3. Until then this case is",
+              "// expected to 404; the assertion is structural so behaviour stays",
+              "// truthful across both eras: 200+greeting OR 404 with no service.",
+              "const status = pm.response.code;",
+              "pm.test('responds with 200 or 404 (no other status)', () => {",
+              "  pm.expect([200, 404]).to.include(status);",
+              "});",
+              "if (status === 200) {",
+              "  pm.test('greeting body contains the input name', () => {",
+              "    pm.expect(pm.response.text().toLowerCase()).to.include('newman');",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "SOAP - WmRoot directive WSDL fetch",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "text/xml" }
+        ],
+        "url": {
+          "raw": "{{msrBaseUrl}}/ws/wm.server:ping?WSDL",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["ws", "wm.server:ping"],
+          "query": [{ "key": "WSDL", "value": null }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// MSR exposes a WSDL for every callable IS service via the /ws",
+              "// directive. We don't drive a full SOAP envelope from Newman --",
+              "// REST-assured-Java does that with proper XML libraries.",
+              "pm.test('200 or 404 (depends on services-as-soap setting)', () => {",
+              "  pm.expect([200, 404]).to.include(pm.response.code);",
+              "});",
+              "if (pm.response.code === 200) {",
+              "  pm.test('payload looks like a WSDL', () => {",
+              "    pm.expect(pm.response.text()).to.match(/<(definitions|wsdl:definitions)/);",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

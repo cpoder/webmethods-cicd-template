@@ -1,0 +1,49 @@
+# Global Variables - test profile (additive overlay).
+# Verbose logging + sidecar host/port pointers consumed at MSR runtime
+# by the test JDBC/JMS/Kafka/MQTT alias `url_template` strings (which
+# are passed verbatim to wm-mcp; MSR substitutes them at connect time).
+# Identity field: variables[].key.
+
+variables:
+  - key: LOG_LEVEL
+    value: DEBUG
+    description: Verbose logging during integration tests.
+
+  - key: TRACE_SAMPLING_RATIO
+    value: 1.0
+    description: Sample every trace.
+
+  - key: INTEGRATION_TEST_MODE
+    value: "true"
+    description: Flag flow services can branch on for test-only behaviour.
+
+  # Sidecar coordinates referenced by the test profile alias templates.
+  # These mirror the service names in tests/integration/compose.yml so
+  # MSR can reach them across the docker-compose network.
+  - key: TEST_DB_HOST
+    value: postgres
+    description: docker-compose service name of the Postgres sidecar.
+  - key: TEST_DB_PORT
+    value: "5432"
+    description: Postgres listener port (container-internal).
+  - key: TEST_DB_NAME
+    value: wm_test
+    description: Database name initialised by fixtures/postgres-init.sql.
+
+  - key: TEST_JMS_HOST
+    value: artemis
+    description: docker-compose service name of the Artemis sidecar.
+  - key: TEST_JMS_PORT
+    value: "61616"
+    description: Artemis core protocol port (container-internal).
+
+  - key: TEST_KAFKA_BOOTSTRAP_SERVERS
+    value: "redpanda:9092"
+    description: Kafka bootstrap from inside the docker-compose network.
+
+  - key: TEST_MQTT_HOST
+    value: mosquitto
+    description: docker-compose service name of the Mosquitto sidecar.
+  - key: TEST_MQTT_PORT
+    value: "1883"
+    description: Mosquitto listener port (container-internal).
