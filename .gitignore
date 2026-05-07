@@ -25,6 +25,7 @@ Thumbs.db
 *.zip
 *.jar
 !packages/*/code/jars/**/*.jar
+/dist/
 
 # Temporary files
 *.tmp
