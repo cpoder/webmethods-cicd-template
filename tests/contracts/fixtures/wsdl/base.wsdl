@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions
+    xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:tns="http://example.com/helloworld"
+    targetNamespace="http://example.com/helloworld">
+  <wsdl:types>
+    <xsd:schema targetNamespace="http://example.com/helloworld">
+      <xsd:element name="GreetRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="name" type="xsd:string"/>
+            <xsd:element name="locale" type="xsd:string" minOccurs="0"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="GreetResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="greeting" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:schema>
+  </wsdl:types>
+  <wsdl:message name="GreetRequestMsg">
+    <wsdl:part name="body" element="tns:GreetRequest"/>
+  </wsdl:message>
+  <wsdl:message name="GreetResponseMsg">
+    <wsdl:part name="body" element="tns:GreetResponse"/>
+  </wsdl:message>
+  <wsdl:portType name="HelloWorldPort">
+    <wsdl:operation name="greet">
+      <wsdl:input message="tns:GreetRequestMsg"/>
+      <wsdl:output message="tns:GreetResponseMsg"/>
+    </wsdl:operation>
+  </wsdl:portType>
+</wsdl:definitions>

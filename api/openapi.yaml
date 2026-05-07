@@ -1,0 +1,105 @@
+# Source-of-truth OpenAPI spec for the public REST surface exposed by the
+# webMethods microservice. scripts/test-contracts.sh diffs this file against
+# the OpenAPI document the running MSR exports for ${info.x-msr-source} via
+# wm-mcp's generate_openapi tool. Any breaking change (new required field,
+# removed endpoint, added required parameter, ...) fails CI unless the PR
+# carries the `breaking-api` label.
+openapi: 3.0.3
+info:
+  title: HelloWorld REST API
+  version: "1.0.0"
+  description: |
+    Public REST endpoints exposed by the HelloWorld package. This document
+    is the contract clients agree on; the implementation in
+    `packages/HelloWorld/` must keep this surface compatible until a
+    `breaking-api`-labelled PR lands.
+  # x-msr-source is the opaque identifier passed verbatim to
+  # `wm-mcp generate_openapi --source <value>`. Convention is
+  # "<package>.<folder>:<service-or-rest-resource>".
+  x-msr-source: HelloWorld.rest:greeter
+servers:
+  - url: http://localhost:5555/restv2/HelloWorld
+    description: Local MSR (default integration-test endpoint)
+paths:
+  /greet:
+    post:
+      operationId: greetUser
+      summary: Compute a greeting for a named recipient
+      tags: [greeter]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GreetRequest"
+      responses:
+        "200":
+          description: Greeting computed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GreetResponse"
+        "400":
+          description: Request body failed validation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness probe
+      tags: [ops]
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+components:
+  schemas:
+    GreetRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Person to greet.
+        locale:
+          type: string
+          description: BCP-47 language tag.
+          default: en
+    GreetResponse:
+      type: object
+      required:
+        - greeting
+        - locale
+      properties:
+        greeting:
+          type: string
+        locale:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    Health:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [up, down]

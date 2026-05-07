@@ -1,0 +1,54 @@
+openapi: 3.0.3
+info:
+  title: HelloWorld REST API
+  version: "1.3.0"
+  x-msr-source: HelloWorld.rest:greeter
+paths:
+  /greet:
+    post:
+      operationId: greetUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GreetRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GreetResponse"
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+components:
+  schemas:
+    GreetRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        locale: { type: string }
+    GreetResponse:
+      type: object
+      required:
+        - greeting   # `locale` dropped from required -- breaking for clients
+                     # that destructure on it
+      properties:
+        greeting: { type: string }
+        locale: { type: string }
+        timestamp: { type: string, format: date-time }
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }

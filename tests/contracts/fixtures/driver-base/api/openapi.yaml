@@ -1,0 +1,31 @@
+openapi: 3.0.3
+info:
+  title: HelloWorld REST API
+  version: "1.0.0"
+  x-msr-source: HelloWorld.rest:greeter
+paths:
+  /greet:
+    post:
+      operationId: greetUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name: { type: string }
+                locale: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - greeting
+                properties:
+                  greeting: { type: string }
