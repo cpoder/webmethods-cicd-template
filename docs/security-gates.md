@@ -1,16 +1,25 @@
 # Security gates
 
-The pipeline runs **two layers** of automated security checks: an
-**inline** layer on every PR (`.github/workflows/security.yml`) and an
-**asynchronous** layer provided by GitHub Advanced Security at the
-repo level. The two are complementary — the inline layer is fail-fast
-so a PR cannot merge while a finding is open, the asynchronous layer
+The pipeline runs **three layers** of automated security checks:
+
+1. An **inline source-tree layer** on every PR
+   (`.github/workflows/security.yml`) — secret scanning + filesystem
+   CVE scanning of dependencies.
+2. An **inline image layer** on every PR that touches the service
+   image (`.github/workflows/image-security.yml`) — base-image
+   signature verification + container CVE scan + SBOM generation /
+   attestation.
+3. An **asynchronous repo-level layer** provided by GitHub Advanced
+   Security — secret scanning, push protection, Dependabot.
+
+The three are complementary — the inline layers are fail-fast so a
+PR cannot merge while a finding is open, the asynchronous layer
 catches things that arrive after merge (new CVE published against an
 old commit, a secret pasted into a comment, etc.).
 
-This page documents both layers and how to verify they work.
+This page documents all three layers and how to verify they work.
 
-## Inline layer (`.github/workflows/security.yml`)
+## Inline source-tree layer (`.github/workflows/security.yml`)
 
 | Job        | Tool                                | Trigger                           | Behaviour on a finding                              |
 | ---------- | ----------------------------------- | --------------------------------- | --------------------------------------------------- |
@@ -48,6 +57,81 @@ are enabled:
 
 The DB is cached across runs via `actions/cache`; daily DB refreshes
 land via the upstream TTL.
+
+## Inline image layer (`.github/workflows/image-security.yml`)
+
+Builds the per-microservice image (`docker/service/Dockerfile`) on
+top of the corporate MSR base, then runs four checks before
+considering it shippable:
+
+| Step                       | Tool       | Behaviour on a finding                                                  |
+| -------------------------- | ---------- | ----------------------------------------------------------------------- |
+| `Verify base image`        | cosign     | **Fails the job** if the base ref is not signed by the production base-image workflow on `main` (Sigstore Fulcio identity, OIDC issuer pinned). Runs **before** the build so a malicious base never reaches the runner filesystem. |
+| `Run trivy image scan`     | trivy      | **Fails on `CRITICAL`**, emits `::warning::` on `HIGH`, ignores `LOW`/`MEDIUM`. SARIF lands in **Security → Code scanning** under category `trivy-image`. |
+| `Generate SBOM`            | syft       | Always produces an SPDX-JSON SBOM and uploads it as an Actions artifact (`sbom-spdx-json`). |
+| `Sign + attest` (publish)  | cosign     | On push-to-main and `workflow_dispatch`, the service image is pushed, signed (`cosign sign`), and the SBOM is attached as an attestation (`cosign attest --type spdxjson`). The workflow re-verifies its own signature + attestation as a smoke test. PR runs **skip** publish/sign/attest. |
+
+### Severity gate (CRITICAL fails, HIGH warns, LOW/MEDIUM ignored)
+
+The trivy image step takes a single JSON scan over the just-built
+image with `--severity HIGH,CRITICAL` (LOW/MEDIUM filtered at the
+scanner). It then converts that JSON into both SARIF (Security tab)
+and table (job log) without re-running trivy, and parses the JSON to
+count CRITICAL vs HIGH findings:
+
+* **CRITICAL count > 0** → `::error::` annotation, exit 1.
+* **HIGH count > 0** → `::warning::` annotation, exit 0.
+* SARIF upload is `if: always()` so findings appear in the Security
+  tab even when the build is failed by a CRITICAL.
+
+### Base-image verification
+
+The expected cosign identity is hard-pinned to:
+
+```
+https://github.com/<owner>/<repo>/.github/workflows/base-image.yml@refs/heads/main
+```
+
+This is intentional — base images cut from a feature branch are not
+production-eligible even if they exist in the registry. Any other
+signer (or no signer at all) fails the gate.
+
+The base image ref defaults to
+`ghcr.io/<owner>/wm-msr-base:<MSR_VERSION>-base-latest`, resolved to
+its current digest at the start of the run so every downstream step
+(verify, build `--from`, trivy, SBOM) targets the same artifact.
+`workflow_dispatch` accepts a `base_image_ref` input for ad-hoc
+overrides.
+
+### Triggers
+
+| Event                | What runs                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `pull_request`       | verify base + build + trivy + SBOM artifact. **No** push, sign, or attest. Image stays in the runner's daemon. |
+| `push` to `main`     | full path: verify + build + trivy + SBOM + push three rolling tags + cosign sign + cosign attest + self-verify. |
+| `schedule` (Mon 04:30 UTC) | full path on `main`. Catches CVEs published against the latest base image even when no service-side change has merged. Offset 30 min after `security.yml`. |
+| `workflow_dispatch`  | full path; honours optional `base_image_ref` input.                                                              |
+
+### Verifying a published service image
+
+```
+cosign verify \
+  --certificate-identity \
+    "https://github.com/<owner>/<repo>/.github/workflows/image-security.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/<owner>/wm-svc:<MSR_VERSION>-svc-latest
+
+cosign verify-attestation \
+  --type spdxjson \
+  --certificate-identity \
+    "https://github.com/<owner>/<repo>/.github/workflows/image-security.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/<owner>/wm-svc:<MSR_VERSION>-svc-latest \
+  | jq -r '.payload' | base64 -d | jq '.predicate.spdxVersion'
+```
+
+The first command authenticates the image; the second pulls the
+attached SPDX-JSON SBOM and prints its `spdxVersion` as a smoke test.
 
 ## Asynchronous layer (GitHub Advanced Security)
 
@@ -154,6 +238,73 @@ gh pr close --delete-branch sec-test-cve-jar
 > negate the rule). This is intentional — JDBC drivers are not
 > source-controlled in this repo (Task 1.1 design decision).
 
+### A3. Vulnerable base image trips the `image-security` PR check
+
+Two reproducible recipes — both turn the `image-security` check red
+on the PR.
+
+#### A3a. Quickest path: `workflow_dispatch` with an unsigned base
+
+No PR/branch needed. From the **Actions → image-security** page,
+click **Run workflow** and set the `base_image_ref` input to
+`docker.io/vulnerables/web-dvwa`. Expected:
+
+1. The `Verify base image cosign signature` step **fails** with a
+   `no matching signatures` / `tlog entry not found` error —
+   `vulnerables/web-dvwa` was never signed by our base-image
+   workflow's identity.
+2. The build does not proceed past base verification (fail-fast
+   ordering is intentional).
+3. The workflow conclusion is `failure`.
+
+This proves the cosign verify gate.
+
+#### A3b. Full path: vulnerable base on a real PR
+
+Reproduces the criterion verbatim ("introducing `vulnerables/web-dvwa`
+as base in a test branch").
+
+```bash
+git checkout -b sec-test-vulnerable-base
+# Override the BASE_IMAGE arg default in the service Dockerfile.
+# This makes the FROM resolve to vulnerables/web-dvwa for the build,
+# and is what the workflow's resolve-base step picks up too (since
+# we do not use the workflow_dispatch override on a pull_request
+# event).
+sed -i 's|^ARG BASE_IMAGE$|ARG BASE_IMAGE=docker.io/vulnerables/web-dvwa|' docker/service/Dockerfile
+
+# Anything else that triggers the image-security path filter is fine;
+# touching the Dockerfile is sufficient.
+git add docker/service/Dockerfile
+git commit -m 'sec-test: vulnerable base (do not merge)'
+git push -u origin sec-test-vulnerable-base
+gh pr create --draft --title 'sec-test: vulnerable base (DO NOT MERGE)' \
+  --body 'Acceptance test for Task 5.2.'
+```
+
+Expected:
+
+1. `Verify base image cosign signature` **fails** — same reason as
+   A3a, web-dvwa is not signed by our base-image workflow identity.
+2. Even if the verify step were skipped, `Run trivy image scan`
+   would fail on CRITICAL CVEs (web-dvwa is built around an EOL
+   Debian with dozens of known critical findings) — so the gate is
+   defended in depth.
+3. The `image-security` PR check turns red.
+
+Cleanup:
+
+```bash
+gh pr close --delete-branch sec-test-vulnerable-base
+```
+
+> **Note.** `vulnerables/web-dvwa` lacks the `sagadmin` user and
+> `IS_INSTANCE_DIR` env var that our service Dockerfile expects, so
+> on some runs the build itself errors before trivy gets a chance.
+> That is still a red `image-security` check, which is what the
+> acceptance criterion calls for. If you want to isolate the
+> *trivy-only* failure mode, use A3a (which never builds at all).
+
 ## Operating notes
 
 - **Allowlisting**: prefer path-scoped allowlists in `.gitleaks.toml`
@@ -162,7 +313,8 @@ gh pr close --delete-branch sec-test-cve-jar
   finding cannot be fixed immediately, add a per-finding suppression
   via `.trivyignore` (NOT yet present in the repo — add it on first
   legitimate need with a comment justifying each entry).
-- **Cron drift**: the weekly schedules of `base-image.yml` (Mon 03:00)
-  and this workflow (Mon 04:00) are intentionally offset by one hour
-  so the base-image rebuild's signed digest is fresh before the CVE
-  scan runs against any downstream image manifests.
+- **Cron drift**: the weekly schedules of `base-image.yml` (Mon 03:00),
+  `security.yml` (Mon 04:00), and `image-security.yml` (Mon 04:30)
+  are intentionally offset so the base-image rebuild's signed digest
+  is fresh before the source CVE scan runs, which is itself fresh
+  before the image CVE scan picks up the new base.

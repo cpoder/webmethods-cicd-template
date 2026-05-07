@@ -249,12 +249,22 @@ The GitHub Actions workflows in `.github/workflows/` handle:
 
 ### Security gates
 
-Every PR runs `gitleaks` (secret scanning over the diff) and
-`trivy fs --severity HIGH,CRITICAL` (dependency CVE scan) via
-`.github/workflows/security.yml`. Both upload SARIF to the
-**Security → Code scanning** tab. See
-[`docs/security-gates.md`](docs/security-gates.md) for the inline +
-GitHub Advanced Security model and acceptance tests.
+Every PR runs three inline security checks:
+
+- `gitleaks` (secret scanning over the diff) and
+  `trivy fs --severity HIGH,CRITICAL` (dependency CVE scan) via
+  `.github/workflows/security.yml`.
+- `cosign verify` against the base image, `trivy image` against the
+  built service image (CRITICAL fails, HIGH warns, LOW/MEDIUM
+  ignored), and `syft` SPDX-JSON SBOM generation via
+  `.github/workflows/image-security.yml`. On push to `main` the
+  service image is also pushed, signed with `cosign sign`, and the
+  SBOM is attached as a `cosign attest --type spdxjson` attestation.
+
+All three jobs upload SARIF to the **Security → Code scanning** tab.
+See [`docs/security-gates.md`](docs/security-gates.md) for the
+inline + GitHub Advanced Security model and acceptance tests
+(A1: gitleaks, A2: trivy-fs, A3: image-security).
 
 ## Contributing
 

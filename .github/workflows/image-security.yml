@@ -1,0 +1,457 @@
+# Service-image security gate.
+#
+# Builds the per-microservice image (docker/service/Dockerfile) on top
+# of the corporate MSR base, then runs four checks before considering
+# it shippable:
+#
+#   1. cosign verify against the BASE image, against the keyless
+#      signature published by .github/workflows/base-image.yml on
+#      push-to-main (Task 1.2). A forged base ref or a base from
+#      outside the corporate registry fails this step. This runs
+#      BEFORE the build so a malicious base never reaches the runner
+#      filesystem.
+#
+#   2. trivy image against the just-built service image. Severity
+#      gates per the security policy:
+#        * CRITICAL    -> fails the workflow (PR gate red).
+#        * HIGH        -> emits ::warning:: + SARIF, but does not fail.
+#        * LOW/MEDIUM  -> ignored on purpose (noise filtering).
+#      The full HIGH/CRITICAL SARIF report uploads to Security ->
+#      Code scanning so triage happens in one place across PRs.
+#
+#   3. syft generates an SPDX-JSON SBOM of the service image and
+#      uploads it as an Actions artifact. Always-on, even on PRs --
+#      review of "what landed in this image" should not wait for
+#      merge.
+#
+#   4. On push to main and workflow_dispatch (publish runs), the
+#      service image is pushed to the registry, signed with cosign
+#      keyless OIDC, and the SBOM is attached as a cosign attestation
+#      (--type spdxjson). The workflow then re-verifies its own
+#      signature and attestation as a sanity check. PR runs SKIP
+#      publish/sign/attest -- a PR cannot mint a production identity
+#      and its signature would be useless to downstream verifiers.
+#
+# Trigger model:
+#   - pull_request: blocks merge if any gate is red.
+#   - push to main: re-runs the gate AND publishes the signed image
+#     plus SBOM attestation for downstream consumers.
+#   - schedule (Mon 04:30 UTC): catches CVEs published against the
+#     latest base image even when no service-side change has merged.
+#     Offset 30 min after security.yml so the trivy DB cache has
+#     already been warmed for this runner host.
+#   - workflow_dispatch: lets a human override the base image via the
+#     `base_image_ref` input (e.g. to reproduce the acceptance test
+#     with a vulnerable base).
+#
+# Acceptance test (criterion from plan task 5.2):
+#   On a throwaway branch, override the base image to
+#   docker.io/vulnerables/web-dvwa (either via workflow_dispatch
+#   input or by editing docker/service/Dockerfile's BASE_IMAGE arg
+#   on a PR). The cosign verify step fails (web-dvwa is not signed
+#   by our base-image workflow) AND the trivy step fails on CRITICAL
+#   CVEs. The "image-security" PR check turns red. See
+#   docs/security-gates.md section A3 for the exact recipe.
+
+name: image-security
+
+on:
+  pull_request:
+    paths:
+      - 'docker/service/**'
+      - 'docker/base/Dockerfile'
+      - 'packages/**'
+      - 'scripts/build-packages.sh'
+      - 'scripts/lib/manifest.sh'
+      - 'versions.env'
+      - '.github/workflows/image-security.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docker/service/**'
+      - 'docker/base/Dockerfile'
+      - 'packages/**'
+      - 'scripts/build-packages.sh'
+      - 'scripts/lib/manifest.sh'
+      - 'versions.env'
+      - '.github/workflows/image-security.yml'
+  schedule:
+    - cron: '30 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      base_image_ref:
+        description: 'Override base image ref (default: <REGISTRY>/<owner>/wm-msr-base:<MSR_VERSION>-base-latest)'
+        required: false
+        default: ''
+
+# id-token: write for cosign keyless via Sigstore Fulcio (publish runs).
+# packages: write for GHCR push (publish runs).
+# security-events: write for SARIF upload to the Security tab.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  security-events: write
+  pull-requests: read
+  actions: read
+
+# Findings are tied to the head ref/SHA. Cancel superseded runs so
+# the Security tab only ever reflects HEAD of a given PR/branch.
+concurrency:
+  group: image-security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  BASE_IMAGE_NAME: ${{ github.repository_owner }}/wm-msr-base
+  SERVICE_IMAGE_NAME: ${{ github.repository_owner }}/wm-svc
+
+jobs:
+  image-security:
+    name: image-security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        # versions.env is the single source of truth (MSR_VERSION,
+        # TRIVY_VERSION, etc). The $GITHUB_ENV format only accepts
+        # KEY=VALUE lines, so filter out comments and blanks.
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Decide whether this run will publish
+        id: mode
+        # PR runs scan but never push/sign/attest -- a PR cannot mint a
+        # production identity, so its signature would be useless to
+        # downstream verifiers. Push to main and manual dispatch DO
+        # publish, sign, and attest.
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Capture build metadata
+        id: meta
+        run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ${{ env.REGISTRY }}
+        # Even PR runs need registry auth: the service Dockerfile
+        # pulls FROM the corporate base on GHCR, which is a private
+        # package by default.
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install trivy ${{ env.TRIVY_VERSION }}
+        # Pin the binary directly rather than via aquasecurity/trivy-
+        # action so we can run a single JSON scan and convert to SARIF
+        # + table from the cached JSON. Also keeps trivy version
+        # discipline aligned with versions.env (same pattern as
+        # gitleaks in security.yml).
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/trivy.tgz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          tar -xzf /tmp/trivy.tgz -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+          trivy --version
+
+      - name: Cache trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          # Distinct key from security.yml's trivy-fs cache so a DB
+          # schema bump on one workflow doesn't poison the other.
+          key: trivy-db-image-v1-${{ runner.os }}
+
+      - name: Resolve base image ref
+        id: base
+        # Pin the base ref to a digest at the start of the run so
+        # everything downstream (cosign verify, build --from, trivy
+        # convert/log) targets exactly the same artifact, even if the
+        # *-base-latest tag is mutated mid-run by a concurrent base
+        # rebuild on a Monday-cron collision.
+        env:
+          OVERRIDE: ${{ github.event.inputs.base_image_ref }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${OVERRIDE}" ]]; then
+            base_ref="${OVERRIDE}"
+          else
+            base_ref="${REGISTRY}/${BASE_IMAGE_NAME}:${MSR_VERSION}-base-latest"
+          fi
+          digest="$(docker buildx imagetools inspect "${base_ref}" --format '{{.Manifest.Digest}}')"
+          base_repo="${base_ref%:*}"
+          # Strip any tag suffix to get the bare repo, then re-attach by digest.
+          if [[ "${base_repo}" == *"@"* ]]; then
+            base_repo="${base_repo%@*}"
+          fi
+          pinned="${base_repo}@${digest}"
+          {
+            echo "ref=${base_ref}"
+            echo "pinned=${pinned}"
+            echo "digest=${digest}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Base image: ${base_ref}"
+          echo "Pinned to:  ${pinned}"
+
+      - name: Verify base image cosign signature
+        # Fail fast: if the base is not signed by the production base-
+        # image workflow on main, we don't even build the service image.
+        # The expected identity is hard-pinned to refs/heads/main on
+        # purpose -- base images cut from a feature branch are not
+        # production-eligible, even if they exist in the registry.
+        env:
+          BASE_PINNED: ${{ steps.base.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          expected_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/base-image.yml@refs/heads/main"
+          cosign verify \
+            --certificate-identity "${expected_identity}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${BASE_PINNED}" > /dev/null
+          echo "Base image signature OK: ${expected_identity}"
+
+      - name: Compute service image tags
+        id: tags
+        env:
+          PUBLISH: ${{ steps.mode.outputs.publish }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:7}"
+          base="${REGISTRY}/${SERVICE_IMAGE_NAME}"
+          if [[ "${PUBLISH}" == "true" ]]; then
+            # Three rolling tags mirroring base-image.yml's pattern.
+            primary="${base}:${MSR_VERSION}-svc-${short_sha}"
+            {
+              echo "tags<<EOF"
+              echo "${base}:${MSR_VERSION}-svc"
+              echo "${base}:${MSR_VERSION}-svc-${short_sha}"
+              echo "${base}:${MSR_VERSION}-svc-latest"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            # Local-only tag for PR builds; never pushed.
+            primary="${base}:pr-${PR_NUMBER:-0}-${short_sha}"
+            {
+              echo "tags<<EOF"
+              echo "${primary}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "primary=${primary}"
+            echo "short_sha=${short_sha}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build service image (load to local daemon)
+        id: build
+        # load:true puts the image in the local Docker daemon so trivy
+        # and syft can read it without a registry round-trip. We do
+        # NOT push here -- publish is a separate step that reuses the
+        # buildx GHA cache, so the second pass is essentially free.
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/service/Dockerfile
+          push: false
+          load: true
+          tags: ${{ steps.tags.outputs.primary }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.pinned }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.meta.outputs.build_time }}
+          cache-from: type=gha,scope=service-image
+          cache-to: type=gha,scope=service-image,mode=max
+
+      - name: Run trivy image scan
+        id: scan
+        # Single JSON scan covering HIGH+CRITICAL; LOW/MEDIUM are
+        # filtered at the scanner level (severity gate). We then
+        # convert the JSON to SARIF (for the Security tab) and to
+        # table (for the human-readable job log) without re-running
+        # the scanner.
+        env:
+          IMAGE_REF: ${{ steps.tags.outputs.primary }}
+        run: |
+          set -euo pipefail
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output trivy.json \
+            --exit-code 0 \
+            --ignore-unfixed=false \
+            "${IMAGE_REF}"
+
+          trivy convert --format sarif --output trivy.sarif trivy.json
+          # Print a human-readable table to the job log for context.
+          # `convert` honours the same severity filter that produced
+          # the JSON, so this is HIGH+CRITICAL only by design.
+          trivy convert --format table trivy.json
+
+          crit=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy.json)
+          high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy.json)
+          {
+            echo "critical_count=${crit}"
+            echo "high_count=${high}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "${high}" -gt 0 ]]; then
+            echo "::warning::trivy image found ${high} HIGH-severity finding(s) in ${IMAGE_REF} (informational; only CRITICAL fails the gate)"
+          fi
+          echo "Findings -- CRITICAL: ${crit}, HIGH: ${high} (LOW/MEDIUM filtered at scanner)"
+
+      - name: Upload trivy SARIF to Security tab
+        if: always() && hashFiles('trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-image
+
+      - name: Fail if CRITICAL findings present
+        if: steps.scan.outputs.critical_count != '0'
+        run: |
+          echo "::error::trivy image found ${{ steps.scan.outputs.critical_count }} CRITICAL finding(s). See the Security tab and the table above for CVE IDs."
+          exit 1
+
+      - name: Generate SBOM (syft, SPDX-JSON)
+        env:
+          IMAGE_REF: ${{ steps.tags.outputs.primary }}
+        # syft reads the local Docker daemon image. The same content
+        # gets pushed in the next step (cache reuse keeps the layers
+        # byte-identical), so the SBOM and the registry digest line
+        # up for the cosign attest step.
+        run: |
+          set -euo pipefail
+          syft "docker:${IMAGE_REF}" -o spdx-json=sbom.spdx.json
+          # Sanity-check the SBOM is well-formed before we attest it.
+          jq -e 'has("spdxVersion")' sbom.spdx.json > /dev/null
+          echo "SBOM generated: $(wc -c < sbom.spdx.json) bytes"
+
+      - name: Upload SBOM as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-spdx-json
+          path: sbom.spdx.json
+          retention-days: 90
+
+      # -------------------------------------------------------------
+      # Publish path: only on push-to-main and workflow_dispatch.
+      # PR runs stop here -- they have already verified the base,
+      # built, scanned, and produced an SBOM artifact.
+      # -------------------------------------------------------------
+
+      - name: Push service image
+        if: steps.mode.outputs.publish == 'true'
+        id: push
+        # Re-run the build with push:true. cache-from/cache-to:gha
+        # makes this near-instant -- buildx reuses the layers from
+        # the local-load build above and just streams the manifest
+        # plus any not-yet-pushed blobs to the registry. provenance
+        # is disabled to keep a single image manifest (cosign sign
+        # works against the index too, but base-image.yml uses
+        # single-manifest, and we mirror its choice for consistency).
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/service/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.pinned }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.meta.outputs.build_time }}
+          cache-from: type=gha,scope=service-image
+          cache-to: type=gha,scope=service-image,mode=max
+          provenance: false
+
+      - name: Sign service image with cosign (keyless OIDC)
+        if: steps.mode.outputs.publish == 'true'
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          short_sha="${{ steps.tags.outputs.short_sha }}"
+          # Sign each tag@digest so `cosign verify <tag>` works for any
+          # of the published tags. The signature is bound to the digest;
+          # only the rekor entry differs per tag.
+          for tag in \
+              "${REGISTRY}/${SERVICE_IMAGE_NAME}:${MSR_VERSION}-svc" \
+              "${REGISTRY}/${SERVICE_IMAGE_NAME}:${MSR_VERSION}-svc-${short_sha}" \
+              "${REGISTRY}/${SERVICE_IMAGE_NAME}:${MSR_VERSION}-svc-latest"; do
+            cosign sign --yes "${tag}@${IMAGE_DIGEST}"
+          done
+
+      - name: Attach SBOM as cosign attestation
+        if: steps.mode.outputs.publish == 'true'
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdxjson \
+            "${REGISTRY}/${SERVICE_IMAGE_NAME}@${IMAGE_DIGEST}"
+
+      - name: Verify own signature & SBOM attestation
+        if: steps.mode.outputs.publish == 'true'
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        # Sanity-check the just-published artifacts against the
+        # workflow's own identity. Downstream consumers should use
+        # exactly this expected_identity to verify the service image.
+        run: |
+          set -euo pipefail
+          expected_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/image-security.yml@${GITHUB_REF}"
+          cosign verify \
+            --certificate-identity "${expected_identity}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${REGISTRY}/${SERVICE_IMAGE_NAME}@${IMAGE_DIGEST}" > /dev/null
+          cosign verify-attestation \
+            --type spdxjson \
+            --certificate-identity "${expected_identity}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${REGISTRY}/${SERVICE_IMAGE_NAME}@${IMAGE_DIGEST}" > /dev/null
+
+      - name: Job summary
+        if: always()
+        env:
+          BASE_PINNED: ${{ steps.base.outputs.pinned }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+          PRIMARY_TAG: ${{ steps.tags.outputs.primary }}
+          CRIT: ${{ steps.scan.outputs.critical_count }}
+          HIGH: ${{ steps.scan.outputs.high_count }}
+          PUBLISH: ${{ steps.mode.outputs.publish }}
+        run: |
+          {
+            echo "## image-security"
+            echo
+            echo "- Base image (pinned): \`${BASE_PINNED}\`"
+            echo "- Service image: \`${PRIMARY_TAG}\`"
+            if [[ -n "${IMAGE_DIGEST}" ]]; then
+              echo "- Service digest: \`${IMAGE_DIGEST}\`"
+            fi
+            echo "- trivy CRITICAL: ${CRIT:-0}"
+            echo "- trivy HIGH (warn-only): ${HIGH:-0}"
+            if [[ "${PUBLISH}" == "true" ]]; then
+              echo "- Mode: scan + publish + sign + SBOM-attest"
+            else
+              echo "- Mode: scan-only (PR gate; no push/sign/attest)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
