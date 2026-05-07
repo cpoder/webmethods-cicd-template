@@ -266,6 +266,19 @@ See [`docs/security-gates.md`](docs/security-gates.md) for the
 inline + GitHub Advanced Security model and acceptance tests
 (A1: gitleaks, A2: trivy-fs, A3: image-security).
 
+### Branch protection
+
+`main` is locked down by the rules codified in
+[`scripts/setup/branch-protection.sh`](scripts/setup/branch-protection.sh):
+required PR review (`>= 1`, bumped to `>= 2` for `/config/prod/` via
+[`CODEOWNERS`](CODEOWNERS)), required status check `gate`, linear
+history, dismiss-stale-reviews, signed commits, no force-push or
+deletion, and push restricted to the release bot. Run
+`scripts/setup/branch-protection.sh` (dry-run) to preview the JSON
+body, or `--apply --bot-app <slug>` to commit the rules. The script
+is idempotent and re-runs cleanly. See
+[`docs/branch-protection.md`](docs/branch-protection.md).
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on:

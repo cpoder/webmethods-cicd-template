@@ -11,6 +11,15 @@
 # Configuration owners
 /config/ @devops-team @integration-team
 
+# Production configuration is the highest-blast-radius surface in
+# this repo: changes are picked up by `apply-config.sh --env prod`
+# and pushed to live MSR instances. Listing two distinct teams here
+# makes `require_code_owner_reviews:true` (set by
+# scripts/setup/branch-protection.sh) demand at least one approval
+# from EACH team -- effectively >= 2 approvals for any PR touching
+# /config/prod/. See docs/branch-protection.md.
+/config/prod/ @devops-team @release-managers
+
 # Docker and deployment
 /docker/ @devops-team
 /helm/ @devops-team @kubernetes-team
