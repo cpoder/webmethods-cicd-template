@@ -1,0 +1,836 @@
+# CI orchestrator: build + test on every PR.
+#
+# Triggers on every pull_request and on push-to-main. The orchestrator
+# wires together all the per-phase scripts that earlier tasks built --
+# scripts/build-packages.sh, scripts/lint-packages.sh, scripts/test-*.sh,
+# scripts/policy/check-*.sh -- and exposes the results as separate PR
+# checks so a failing single test shows up as a single red check rather
+# than collapsing into a multi-page log.
+#
+# Job graph:
+#
+#   setup ──┬─> lint-packages ────────────────────┐
+#           ├─> build-image ─┬─> unit-tests ──────┤
+#           │                ├─> integration-tests┤
+#           │                └─> contract-tests ──┤
+#           └─> security ────────────────────────┤
+#                                                  └─> gate
+#
+# `gate` is the single required check in branch protection. Every other
+# job feeds into it via `needs:`, so adding a new check is a one-line
+# addition (extend gate's `needs:` and the `result` walk in its step)
+# rather than a branch-protection edit.
+#
+# Reports: every job that produces output writes to `reports/**` and
+# uploads it as a workflow artifact. JUnit XML is rendered inline via
+# dorny/test-reporter@v1 so test failures appear in the PR review with
+# the failing test name and message, not just "build failed".
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same PR/branch -- the latest commit is
+# the only one that needs a green gate.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# packages: write          - build-image pushes the PR-scoped image to GHCR
+# pull-requests: read      - read PR labels (e.g. breaking-api) for contract gate
+# checks: write            - dorny/test-reporter publishes JUnit results inline
+# security-events: write   - SARIF upload (gitleaks/trivy in the security job)
+# id-token: write          - reserved for cosign keyless on push-to-main paths
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+  checks: write
+  security-events: write
+  id-token: write
+  actions: read
+
+env:
+  REGISTRY: ghcr.io
+  BASE_IMAGE_NAME: ${{ github.repository_owner }}/wm-msr-base
+  SERVICE_IMAGE_NAME: ${{ github.repository_owner }}/wm-svc
+
+jobs:
+  # ===================================================================
+  # setup
+  #
+  # Single source of truth for everything every other job derives from:
+  #   * versions.env loaded into outputs (MSR_VERSION etc)
+  #   * package matrix (JSON list of package names)
+  #   * service image tag for this run (pr-<num>-<sha>)
+  #   * pinned base image ref for downstream FROM lines
+  # ===================================================================
+  setup:
+    name: setup
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.matrix.outputs.packages }}
+      has_packages: ${{ steps.matrix.outputs.has_packages }}
+      msr_version: ${{ steps.versions.outputs.msr_version }}
+      service_image_tag: ${{ steps.tags.outputs.service_image_tag }}
+      service_image_ref: ${{ steps.tags.outputs.service_image_ref }}
+      base_image_ref: ${{ steps.tags.outputs.base_image_ref }}
+      short_sha: ${{ steps.tags.outputs.short_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        id: versions
+        run: |
+          set -euo pipefail
+          # versions.env is the single source of truth (MSR_VERSION,
+          # WM_MCP_SERVER_VERSION, GITLEAKS_VERSION, TRIVY_VERSION, ...).
+          # The $GITHUB_ENV format only accepts KEY=VALUE lines, so we
+          # filter out comments and blanks. Same pattern used by every
+          # other workflow in .github/workflows/.
+          grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+          msr_version=$(grep -E '^MSR_VERSION=' versions.env | cut -d= -f2)
+          echo "msr_version=${msr_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute package build matrix
+        id: matrix
+        run: |
+          set -euo pipefail
+          # A "package" is a directory directly under packages/ that
+          # carries a manifest.v3 -- exactly the rule build-packages.sh
+          # uses, kept in sync intentionally.
+          mapfile -t pkgs < <(
+            find packages -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+              | while read -r d; do
+                  [[ -f "${d}/manifest.v3" ]] && basename "${d}"
+                done \
+              | sort
+          )
+          if (( ${#pkgs[@]} > 0 )); then
+            packages_json=$(printf '%s\n' "${pkgs[@]}" | jq -Rcn '[inputs]')
+            echo "has_packages=true" >> "$GITHUB_OUTPUT"
+          else
+            packages_json='[]'
+            echo "has_packages=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "packages=${packages_json}" >> "$GITHUB_OUTPUT"
+          echo "Discovered packages: ${packages_json}"
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:7}"
+          # Use the PR number if we have one, fall back to the short
+          # sha for push-to-main builds (which mint a non-PR tag).
+          pr_num="${{ github.event.pull_request.number }}"
+          if [[ -n "${pr_num}" ]]; then
+            tag="pr-${pr_num}-${GITHUB_SHA}"
+          else
+            tag="main-${short_sha}-${GITHUB_SHA}"
+          fi
+          base_ref="${REGISTRY}/${BASE_IMAGE_NAME}:${MSR_VERSION}-base-latest"
+          svc_ref="${REGISTRY}/${SERVICE_IMAGE_NAME}:${tag}"
+          {
+            echo "short_sha=${short_sha}"
+            echo "service_image_tag=${tag}"
+            echo "service_image_ref=${svc_ref}"
+            echo "base_image_ref=${base_ref}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Service image: ${svc_ref}"
+          echo "Base image:    ${base_ref}"
+
+  # ===================================================================
+  # lint-packages
+  #
+  # Runs scripts/lint-packages.sh. The script boots its own throwaway
+  # MSR container via `docker run --rm -d` (see scripts/lint-packages.sh
+  # head comment), so a `services:` sidecar would race with it -- we
+  # let the script own the container lifecycle and just pre-pull the
+  # image to warm the runner cache. Skipped when packages/ is empty
+  # (nothing to lint); the gate treats `skipped` as a pass.
+  # ===================================================================
+  lint-packages:
+    name: lint-packages
+    needs: setup
+    if: needs.setup.outputs.has_packages == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Log in to ${{ env.REGISTRY }}
+        # The corporate base image is private on GHCR; lint needs to
+        # pull it before booting the linter container.
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Pre-pull MSR base image
+        env:
+          BASE_REF: ${{ needs.setup.outputs.base_image_ref }}
+        run: docker pull "${BASE_REF}"
+
+      - name: Build package zips
+        run: ./scripts/build-packages.sh
+
+      - name: Lint packages (wm-mcp static checks)
+        env:
+          MSR_IMAGE: ${{ needs.setup.outputs.base_image_ref }}
+        run: ./scripts/lint-packages.sh --image "${MSR_IMAGE}"
+
+      - name: Render JUnit report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: lint-packages results
+          path: reports/lint/results.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-lint
+          path: reports/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===================================================================
+  # build-image
+  #
+  # Builds the per-microservice image (docker/service/Dockerfile) on top
+  # of the corporate MSR base, pushes to GHCR with a PR-scoped tag.
+  # buildx GHA cache (scope=svc-image) keeps subsequent test jobs from
+  # pulling cold layers and lets push-to-main runs reuse the PR build.
+  # ===================================================================
+  build-image:
+    name: build-image
+    needs: setup
+    runs-on: ubuntu-latest
+    outputs:
+      image_ref: ${{ needs.setup.outputs.service_image_ref }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ${{ env.REGISTRY }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Capture build metadata
+        id: meta
+        run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve base image to digest
+        id: base
+        # Pin to a digest at the start of the run so the FROM in the
+        # service Dockerfile is reproducible even if *-base-latest is
+        # mutated mid-run by a Monday-cron base rebuild collision.
+        env:
+          BASE_REF: ${{ needs.setup.outputs.base_image_ref }}
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "${BASE_REF}" --format '{{.Manifest.Digest}}')
+          base_repo="${BASE_REF%:*}"
+          if [[ "${base_repo}" == *"@"* ]]; then
+            base_repo="${base_repo%@*}"
+          fi
+          pinned="${base_repo}@${digest}"
+          {
+            echo "pinned=${pinned}"
+            echo "digest=${digest}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Base pinned to: ${pinned}"
+
+      - name: Build & push service image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/service/Dockerfile
+          push: true
+          tags: ${{ needs.setup.outputs.service_image_ref }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.pinned }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.meta.outputs.build_time }}
+          # Distinct cache scope from base-image (scope=base-image) and
+          # image-security (scope=service-image) so a schema bump on one
+          # doesn't poison the others.
+          cache-from: type=gha,scope=svc-image
+          cache-to: type=gha,scope=svc-image,mode=max
+          # Single-image manifest matches base-image.yml's choice and
+          # keeps cosign sign/attest simple downstream.
+          provenance: false
+
+      - name: Job summary
+        env:
+          IMAGE_REF: ${{ needs.setup.outputs.service_image_ref }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "## build-image"
+            echo
+            echo "- Image: \`${IMAGE_REF}\`"
+            echo "- Digest: \`${DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===================================================================
+  # unit-tests
+  #
+  # Runs scripts/test-unit.sh against the wm-msr-base-test image (the
+  # variant carrying WmTestSuite + Ant). The runner mounts <repo>/
+  # packages and tests/unit/<P>Test/ projects; the just-built service
+  # image isn't consumed directly because UTF runs against package
+  # source, not against pre-baked images. The dependency on build-image
+  # is for ordering (don't run unit tests if the image build broke
+  # because of a packaging error caught by build-packages.sh).
+  # ===================================================================
+  unit-tests:
+    name: unit-tests
+    needs: [setup, build-image]
+    if: needs.setup.outputs.has_packages == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ${{ env.REGISTRY }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Build wm-msr-base-test image
+        # The base-image workflow only publishes the prod target. The
+        # test variant (wmTestSuite + Ant) isn't pushed anywhere yet,
+        # so we build it locally from docker/base/Dockerfile --target
+        # test. Tag matches test-unit.sh's default (wm-msr-base-test:
+        # ${MSR_VERSION}) so no env override is needed.
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/base
+          file: docker/base/Dockerfile
+          target: test
+          push: false
+          load: true
+          tags: wm-msr-base-test:${{ needs.setup.outputs.msr_version }}
+          build-args: |
+            MSR_BASE_IMAGE=${{ env.MSR_BASE_IMAGE }}
+            MSR_VERSION=${{ needs.setup.outputs.msr_version }}
+            WM_MCP_SERVER_VERSION=${{ env.WM_MCP_SERVER_VERSION }}
+            WM_TEST_SUITE_INSTALLER_URL=${{ env.WM_TEST_SUITE_INSTALLER_URL }}
+          cache-from: type=gha,scope=base-image-test
+          cache-to: type=gha,scope=base-image-test,mode=max
+
+      - name: Run unit tests (WmTestSuite + Ant)
+        run: ./scripts/test-unit.sh
+
+      - name: Render JUnit report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: unit-tests results
+          path: reports/unit/junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload unit-test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-unit
+          path: reports/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===================================================================
+  # integration-tests
+  #
+  # Brings up tests/integration/compose.yml (postgres, artemis,
+  # mosquitto, redpanda, and MSR pointed at the just-built service
+  # image), applies config/test/, and runs Newman + k6 + REST-assured.
+  # The MSR_IMAGE env override makes compose pull the pr-<num>-<sha>
+  # image we just pushed instead of the placeholder default.
+  # ===================================================================
+  integration-tests:
+    name: integration-tests
+    needs: [setup, build-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Set up Node (for Newman)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Newman
+        run: npm install --global newman newman-reporter-htmlextra
+
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Install Python deps for apply-config
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install pyyaml jsonschema
+
+      - name: Log in to ${{ env.REGISTRY }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Run integration tests
+        env:
+          # Override MSR_IMAGE so compose pulls the just-built service
+          # image instead of falling through to its placeholder default.
+          MSR_IMAGE: ${{ needs.setup.outputs.service_image_ref }}
+          # Sidecar passwords are referenced by config/test via
+          # ${SECRET:DB_PASSWORD_TESTDB} etc; values match the compose
+          # postgres/artemis defaults.
+          DB_PASSWORD_TESTDB: testpass
+          JMS_PASSWORD_TESTQUEUE: testpass
+        run: ./scripts/test-integration.sh
+
+      - name: Render JUnit report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: integration-tests results
+          path: reports/integration/junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload integration reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-integration
+          path: reports/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===================================================================
+  # contract-tests
+  #
+  # Boots the just-built service image standalone (no sidecars; contract
+  # tests compare exported OpenAPI/WSDL against the committed contracts
+  # and don't need the integration sidecars), applies config/test/ so
+  # ports/ACLs are wired, then runs scripts/test-contracts.sh. The
+  # `breaking-api` PR label downgrades breaking-change failures to
+  # warnings via ALLOW_BREAKING_API.
+  # ===================================================================
+  contract-tests:
+    name: contract-tests
+    needs: [setup, build-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Install Python deps
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install pyyaml jsonschema
+
+      - name: Log in to ${{ env.REGISTRY }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Boot service container
+        id: msr
+        env:
+          IMAGE_REF: ${{ needs.setup.outputs.service_image_ref }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE_REF}"
+          cid=$(docker run --rm -d \
+            --name wm-svc-contracts \
+            -p 5555:5555 \
+            -e MSR_ADMIN_USER=Administrator \
+            -e MSR_ADMIN_PASSWORD=manage \
+            "${IMAGE_REF}")
+          echo "cid=${cid}" >> "$GITHUB_OUTPUT"
+          # Wait up to 4 minutes for /invoke/wm.server:ping. The base
+          # image's healthcheck has start_period=60s, so this is the
+          # documented worst case + headroom.
+          deadline=$(( SECONDS + 240 ))
+          auth=$(printf 'Administrator:manage' | base64 | tr -d '\n')
+          while (( SECONDS < deadline )); do
+            if curl -fsS -H "Authorization: Basic ${auth}" \
+                http://localhost:5555/invoke/wm.server:ping >/dev/null 2>&1; then
+              echo "MSR ready."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::MSR did not become ready within 240s"
+          docker logs --tail 200 "${cid}" || true
+          exit 1
+
+      - name: Apply config/test
+        env:
+          DB_PASSWORD_TESTDB: testpass
+          JMS_PASSWORD_TESTQUEUE: testpass
+        run: |
+          # Best-effort: contract tests don't strictly need full config
+          # to be live, but applying ports/ACLs makes the exported
+          # spec match the committed one. apply-config.sh handles a
+          # missing wm-mcp by failing -- since we're against an MSR
+          # that ships wm-mcp baked in (Task 1.1), it's available.
+          ./scripts/apply-config.sh --env test || \
+            echo "::warning::apply-config.sh failed; contract diff may flag absent endpoints"
+
+      - name: Detect breaking-api label
+        id: label
+        if: github.event_name == 'pull_request'
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if echo "${LABELS}" | jq -e '.[] | select(. == "breaking-api")' >/dev/null 2>&1; then
+            echo "allow_breaking=1" >> "$GITHUB_OUTPUT"
+            echo "breaking-api label detected; contract gate will warn instead of fail."
+          else
+            echo "allow_breaking=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run contract tests
+        env:
+          ALLOW_BREAKING_API: ${{ steps.label.outputs.allow_breaking || '0' }}
+        run: ./scripts/test-contracts.sh
+
+      - name: Render JUnit report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: contract-tests results
+          path: reports/contracts/junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload contract reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-contracts
+          path: reports/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Stop service container
+        if: always() && steps.msr.outputs.cid != ''
+        run: docker stop "${{ steps.msr.outputs.cid }}" || true
+
+  # ===================================================================
+  # security
+  #
+  # Phase-5 source-tree gates bundled into one job so the gate aggregator
+  # below has a single check to require. Three gate families run as
+  # sequential steps on one runner (cheaper than three jobs spinning up
+  # the same checkout/cache):
+  #
+  #   * gitleaks (Task 5.1) - secret scanning over the PR diff
+  #   * trivy fs (Task 5.1) - HIGH/CRITICAL CVE scan
+  #   * policy scripts (Task 5.3) - naming, ACL, manifest, settings
+  #
+  # The standalone .github/workflows/security.yml + policy.yml continue
+  # to exist as deeper independent gates (weekly cron, full-tree scan).
+  # Image-side scanning (Task 5.2) lives in image-security.yml because
+  # it has different timing characteristics (depends on the built image,
+  # cosign sign on push-to-main only).
+  # ===================================================================
+  security:
+    name: security
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # gitleaks needs full history to resolve base..HEAD on PRs.
+          fetch-depth: 0
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      # ----- Phase 5.1: gitleaks ---------------------------------------
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+
+      - name: Choose gitleaks scan range
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            git fetch --no-tags --depth=0 origin "${BASE_REF}" >/dev/null 2>&1 || true
+            echo "mode=git" >> "$GITHUB_OUTPUT"
+            echo "log_opts=origin/${BASE_REF}..HEAD" >> "$GITHUB_OUTPUT"
+          elif [[ "${EVENT_NAME}" == "push" && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+            echo "mode=git" >> "$GITHUB_OUTPUT"
+            echo "log_opts=${BEFORE_SHA}..${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=dir" >> "$GITHUB_OUTPUT"
+            echo "log_opts=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run gitleaks
+        id: gitleaks
+        continue-on-error: true
+        env:
+          MODE: ${{ steps.range.outputs.mode }}
+          LOG_OPTS: ${{ steps.range.outputs.log_opts }}
+        run: |
+          set -euo pipefail
+          common=(
+            --config .gitleaks.toml
+            --redact
+            --report-format sarif
+            --report-path gitleaks.sarif
+            --exit-code 1
+            --verbose
+          )
+          if [[ "${MODE}" == "git" ]]; then
+            gitleaks git "${common[@]}" --log-opts "${LOG_OPTS}"
+          else
+            gitleaks dir . "${common[@]}"
+          fi
+
+      - name: Upload gitleaks SARIF
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks-ci
+
+      # ----- Phase 5.1: trivy fs ---------------------------------------
+      - name: Cache trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          # Distinct key from security.yml's trivy-fs cache so a DB
+          # schema bump on one workflow doesn't poison the other.
+          key: trivy-db-ci-v1-${{ runner.os }}
+
+      - name: Run trivy fs
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy.sarif
+          exit-code: '1'
+          ignore-unfixed: false
+          skip-dirs: dist,reports,.git
+          version: v${{ env.TRIVY_VERSION }}
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-java-db
+
+      - name: Run trivy fs (table for the log)
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          scanners: vuln,secret,misconfig
+          format: table
+          exit-code: '0'
+          skip-dirs: dist,reports,.git
+          version: v${{ env.TRIVY_VERSION }}
+
+      - name: Upload trivy SARIF
+        if: always() && hashFiles('trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-fs-ci
+
+      # ----- Phase 5.3: policy scripts ---------------------------------
+      - name: Policy - package naming
+        id: pol_naming
+        continue-on-error: true
+        run: ./scripts/policy/check-package-naming.sh
+
+      - name: Policy - ACL hygiene
+        id: pol_acl
+        continue-on-error: true
+        run: ./scripts/policy/check-acl-hygiene.sh
+
+      - name: Policy - manifests
+        id: pol_manifests
+        continue-on-error: true
+        run: ./scripts/policy/check-manifests.sh
+
+      - name: Policy - extended settings
+        id: pol_settings
+        continue-on-error: true
+        run: |
+          ./scripts/policy/check-extended-settings.sh \
+            --catalog scripts/policy/extended-settings-catalog.fallback.json
+
+      # Image-size policy is run downstream once we have a real image
+      # (see image-security.yml). Here we only sanity-check the script
+      # itself with a synthetic input so a regression in the script
+      # surfaces before it gets to a publish run.
+      - name: Policy - image size (self-test)
+        id: pol_size
+        continue-on-error: true
+        run: ./scripts/policy/check-image-size.sh --size-bytes 1073741824
+
+      - name: Aggregate security gate result
+        # Fail the job if ANY of the steps above failed. continue-on-error
+        # made each one non-fatal at step level so the SARIF uploads and
+        # subsequent checks all run; the final verdict is decided here.
+        run: |
+          set -euo pipefail
+          declare -A results=(
+            [gitleaks]='${{ steps.gitleaks.outcome }}'
+            [trivy-fs]='${{ steps.trivy.outcome }}'
+            [policy-naming]='${{ steps.pol_naming.outcome }}'
+            [policy-acl]='${{ steps.pol_acl.outcome }}'
+            [policy-manifests]='${{ steps.pol_manifests.outcome }}'
+            [policy-settings]='${{ steps.pol_settings.outcome }}'
+            [policy-size-selftest]='${{ steps.pol_size.outcome }}'
+          )
+          fail=0
+          for k in "${!results[@]}"; do
+            v="${results[$k]}"
+            printf '  %-25s %s\n' "$k" "$v"
+            if [[ "$v" != "success" && "$v" != "skipped" ]]; then
+              fail=1
+            fi
+          done
+          if (( fail == 1 )); then
+            echo "::error::one or more security/policy gates failed; see steps and the Security tab for details."
+            exit 1
+          fi
+
+  # ===================================================================
+  # gate
+  #
+  # The single required check in branch protection. Aggregates every
+  # job above so the protection rule never has to be edited when we
+  # add a new check -- just extend `needs:` and the result walk below.
+  #
+  # `if: always()` so the gate runs even when an upstream job fails or
+  # is cancelled; the step then exits non-zero unless every dependency
+  # is success-or-skipped.
+  # ===================================================================
+  gate:
+    name: gate
+    if: always()
+    needs:
+      - setup
+      - lint-packages
+      - build-image
+      - unit-tests
+      - integration-tests
+      - contract-tests
+      - security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all checks passed
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          set -euo pipefail
+          echo "${NEEDS_JSON}" | jq .
+          # Walk every dependency. `success` (job ran and passed) and
+          # `skipped` (job's `if:` was false -- e.g. lint/unit when
+          # packages/ is empty) both count as a pass. Anything else
+          # (failure, cancelled) fails the gate.
+          fail=$(echo "${NEEDS_JSON}" \
+            | jq -r 'to_entries | map(select(.value.result != "success" and .value.result != "skipped")) | length')
+          if [[ "${fail}" != "0" ]]; then
+            echo "::error::gate: $fail upstream job(s) did not pass."
+            echo "${NEEDS_JSON}" \
+              | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+            exit 1
+          fi
+          echo "All upstream jobs passed (success or skipped)."
+
+      - name: Job summary
+        if: always()
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          {
+            echo "## CI gate"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | ------ |"
+            echo "${NEEDS_JSON}" \
+              | jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
