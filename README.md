@@ -247,6 +247,15 @@ The GitHub Actions workflows in `.github/workflows/` handle:
 4. **Deploy to Test** - Manual approval required
 5. **Deploy to Prod** - Manual approval + additional checks
 
+### Security gates
+
+Every PR runs `gitleaks` (secret scanning over the diff) and
+`trivy fs --severity HIGH,CRITICAL` (dependency CVE scan) via
+`.github/workflows/security.yml`. Both upload SARIF to the
+**Security → Code scanning** tab. See
+[`docs/security-gates.md`](docs/security-gates.md) for the inline +
+GitHub Advanced Security model and acceptance tests.
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on:

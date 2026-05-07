@@ -1,0 +1,213 @@
+# Security gates: secret scanning + dependency CVE scanning.
+#
+# This workflow is the inline counterpart to GitHub Advanced Security:
+#   * Secret Scanning + Push Protection: enabled at the repo level
+#     (Settings -> Code security and analysis). Asynchronous, post-push.
+#   * Dependabot alerts / security updates: enabled at the repo level.
+#     Asynchronous, scheduled.
+#
+# Advanced Security catches problems eventually. This workflow catches
+# them BEFORE merge:
+#   - gitleaks runs over the PR diff (or full tree on push/schedule)
+#     and fails the build if any secret-shaped string lands in source.
+#   - trivy fs scans the working tree for HIGH/CRITICAL CVEs in JAR
+#     dependencies (docker/base/jars), lockfiles, etc., and fails the
+#     build on any finding at that severity.
+#
+# Both jobs always upload a SARIF report (even on failure) so findings
+# show up in the Security -> Code scanning tab and can be triaged
+# centrally instead of buried in a workflow log.
+
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly catch-all so we surface CVEs published against jars that
+    # no PR has touched in a while. Same cadence as base-image rebuild.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+# Security findings are tied to the head ref/SHA. Cancel superseded
+# runs on the same PR/branch so the Security tab reflects HEAD only.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Required to publish SARIF to the Security -> Code scanning tab.
+  security-events: write
+  # Allows gitleaks to read the PR base ref for diff-only scanning.
+  pull-requests: read
+  actions: read
+
+jobs:
+  # -------------------------------------------------------------------
+  # gitleaks: secret scanning, fail-fast on the PR diff.
+  # -------------------------------------------------------------------
+  gitleaks:
+    name: gitleaks (secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need full history so `gitleaks git --log-opts=base..HEAD`
+          # can resolve both ends of the diff range.
+          fetch-depth: 0
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Choose scan range
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # PR  -> scan only commits added on top of the target branch.
+          # Push -> scan only commits new in this push (skip on first
+          #         push where `before` is the all-zeros SHA).
+          # Schedule / manual -> full working-tree scan as a safety net
+          #                     for branches that bypassed PR review.
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            git fetch --no-tags --depth=0 origin "${BASE_REF}" >/dev/null 2>&1 || true
+            echo "mode=git" >> "$GITHUB_OUTPUT"
+            echo "log_opts=origin/${BASE_REF}..HEAD" >> "$GITHUB_OUTPUT"
+          elif [[ "${EVENT_NAME}" == "push" && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+            echo "mode=git" >> "$GITHUB_OUTPUT"
+            echo "log_opts=${BEFORE_SHA}..${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=dir" >> "$GITHUB_OUTPUT"
+            echo "log_opts=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run gitleaks
+        id: scan
+        # We deliberately do not let gitleaks short-circuit the job:
+        # we want the SARIF upload step below to run on findings too.
+        continue-on-error: true
+        env:
+          MODE: ${{ steps.range.outputs.mode }}
+          LOG_OPTS: ${{ steps.range.outputs.log_opts }}
+        run: |
+          set -euo pipefail
+          common=(
+            --config .gitleaks.toml
+            --redact
+            --report-format sarif
+            --report-path gitleaks.sarif
+            --exit-code 1
+            --verbose
+          )
+          if [[ "${MODE}" == "git" ]]; then
+            gitleaks git "${common[@]}" --log-opts "${LOG_OPTS}"
+          else
+            gitleaks dir . "${common[@]}"
+          fi
+
+      - name: Upload SARIF to Security tab
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      - name: Fail if secrets were found
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::error::gitleaks detected one or more secrets. See the Security tab and the step log above for details."
+          echo "Refer to .gitleaks.toml for allowlist guidance if this is a confirmed false positive (rotate first if it is real)."
+          exit 1
+
+  # -------------------------------------------------------------------
+  # trivy fs: dependency CVE gate, HIGH/CRITICAL fail the build.
+  # -------------------------------------------------------------------
+  trivy-fs:
+    name: trivy fs (CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Cache trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          # Bump the suffix to bust the cache after a major DB schema
+          # change. Otherwise the daily DB updates land via TTL.
+          key: trivy-db-v1-${{ runner.os }}
+
+      - name: Run trivy fs
+        id: scan
+        # Same pattern as gitleaks: fail later, after SARIF is uploaded.
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          # Filesystem scan covers JARs (docker/base/jars), Maven
+          # poms (tests/integration/restassured), Dockerfiles and any
+          # other supported lockfiles trivy auto-detects.
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy.sarif
+          exit-code: '1'
+          ignore-unfixed: false
+          skip-dirs: dist,reports,.git
+          version: v${{ env.TRIVY_VERSION }}
+        env:
+          # trivy resolves the version-matched DB from these mirrors;
+          # rate-limit-friendly defaults are fine but kept explicit so
+          # an air-gapped corporate runner can override them.
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-java-db
+
+      - name: Run trivy fs (table output for the log)
+        # Re-run scan in table mode so the CVE IDs are visible inline
+        # in the Actions log (acceptance criterion: a vulnerable JAR
+        # placed in docker/base/jars/ fails this step with the CVE ID
+        # in the log). This is cheap because the DB is already cached.
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          scanners: vuln,secret,misconfig
+          format: table
+          exit-code: '0'
+          skip-dirs: dist,reports,.git
+          version: v${{ env.TRIVY_VERSION }}
+
+      - name: Upload SARIF to Security tab
+        if: always() && hashFiles('trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-fs
+
+      - name: Fail if HIGH/CRITICAL CVEs were found
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::error::trivy detected HIGH/CRITICAL findings. See the Security tab and the table log step above for CVE IDs."
+          exit 1

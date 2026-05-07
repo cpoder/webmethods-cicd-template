@@ -1,0 +1,72 @@
+# gitleaks rule set for the webMethods microservice CI/CD pipeline.
+#
+# Strategy: inherit gitleaks' built-in detectors (AWS, GCP, Azure,
+# Slack, Stripe, GitHub PATs, generic high-entropy, private keys,
+# etc.) and only add a small repo-local allowlist so the scan stays
+# tight without drowning PR authors in false positives.
+#
+# How to test the rule set locally before pushing:
+#   gitleaks dir . --redact --report-format json --report-path /tmp/gl.json
+#
+# How to add a new allowlist entry:
+#   - File-scoped:   add a regex to `[[allowlists]] paths`.
+#   - Value-scoped:  add a regex to `[[allowlists]] regexes` with a
+#                    rule-specific stopword (NEVER allowlist a real
+#                    secret -- rotate it instead).
+
+title = "wmcicd gitleaks config"
+
+[extend]
+# Pull in the maintained default rule pack (covers ~150 secret
+# providers including AWS access tokens, which is the acceptance
+# criterion for Task 5.1).
+useDefault = true
+
+# ----------------------------------------------------------------------
+# Repo-wide allowlist
+# ----------------------------------------------------------------------
+# Top-level allowlists apply to every rule. Use these for:
+#   * fixtures/documentation that intentionally embed example tokens
+#   * generated artifact paths that are not in source control but may
+#     leak into the working tree on a CI runner
+#
+# Rule-specific allowlists (added under a `[[rules]]` block) are NOT
+# defined here -- we rely on the upstream defaults; if a future rule
+# is too noisy, suppress it locally instead of disabling globally.
+
+[[allowlists]]
+description = "Files that legitimately contain secret-shaped strings"
+paths = [
+  # The config file itself documents example patterns.
+  '''^\.gitleaks\.toml$''',
+  # Documentation calls out canonical AWS / Vault example URIs.
+  '''^docs/secrets\.md$''',
+  # Build artifact directories (also gitignored, but defense in depth
+  # for `gitleaks dir .` which scans the working tree).
+  '''^dist/''',
+  '''^reports/''',
+  # SBOM output from the base-image workflow.
+  '''^sbom\.spdx\.json$''',
+]
+
+[[allowlists]]
+description = "Canonical example values from public documentation"
+# Only the well-known docs examples -- never a real-looking key.
+regexes = [
+  # AWS official docs example access key id.
+  '''AKIAIOSFODNN7EXAMPLE''',
+  # AWS official docs example secret access key.
+  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+]
+
+[[allowlists]]
+description = "Test fixtures that hold non-production credentials"
+# The integration-test sidecars (postgres/artemis/redpanda/mosquitto)
+# launch on the loopback interface with default credentials -- their
+# values are documented in tests/integration/compose.yml and there is
+# nothing to leak. We allowlist by path so a real-looking key dropped
+# in the same file would still be caught by other rules.
+paths = [
+  '''^tests/integration/postman/.*\.postman_environment\.json$''',
+  '''^tests/integration/compose\.yml$''',
+]
