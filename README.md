@@ -160,18 +160,21 @@ docker compose down
    - Modify values for the new environment
    - Add secrets/credentials references (never commit actual secrets)
 
-3. **Update CI/CD workflow**:
+3. **Create the GitHub Environment and seed its secrets**:
+   - Follow `docs/secrets.md` (canonical secret matrix and prod
+     protection rules)
+   - Run `scripts/setup-environments.sh --apply` after appending the
+     new env to `ENVIRONMENTS` in that script
+   - Run `scripts/setup-environments.sh --check` to verify every
+     matrix-listed secret is set
+
+4. **Update CI/CD workflow**:
    - Edit `.github/workflows/deploy.yml`
    - Add the new environment to the deployment matrix
-   - Configure environment protection rules in GitHub
 
-4. **Update deployment scripts**:
+5. **Update deployment scripts**:
    - Modify `scripts/apply-config.sh` if needed
    - Add environment-specific deployment logic
-
-5. **Document the environment**:
-   - Update `docs/environments.md` with connection details
-   - Document any environment-specific requirements
 
 ## Configuration Management
 
