@@ -1,0 +1,59 @@
+# run-test-suites.properties.tmpl
+#
+# Template consumed by scripts/lib/render-properties.sh and rendered to
+# tests/unit/run-test-suites.properties at CI time. The rendered file is
+# fed to the WmTestSuite Composite Runner via:
+#
+#   ant -f $WM_HOME/.../WmTestSuite/code/ant/run-composite-runner.xml \
+#       -propertyfile /tests/run-test-suites.properties \
+#       composite-runner-all-tests-with-coverage
+#
+# Why a template:
+#   The committed file in git holds NO secrets. CI populates the
+#   placeholders below from env vars (which themselves come from
+#   GitHub Secrets / Vault / k8s Secret) at apply time.
+#
+# Placeholder syntax: ${NAME} -- env-var substitution, NOT shell-style
+# command substitution. Any ${NAME} that has no matching env var fails
+# rendering loudly so CI doesn't silently produce a properties file
+# with literal "${IS_PASSWORD}" inside.
+#
+# Property keys below match what the WmTestSuite Composite Runner
+# expects (composite.test.is.* and composite.test.suites.*); do not
+# rename them without checking the bundled run-composite-runner.xml.
+
+# ---------------------------------------------------------------------
+# Target Integration Server
+# ---------------------------------------------------------------------
+composite.test.is.host=${IS_HOST}
+composite.test.is.port=${IS_PORT}
+composite.test.is.username=${IS_USERNAME}
+composite.test.is.password=${IS_PASSWORD}
+composite.test.is.useHttps=${IS_USE_HTTPS}
+
+# ---------------------------------------------------------------------
+# Test discovery
+# ---------------------------------------------------------------------
+# Root directory holding the per-package test projects
+# (tests/unit/<P>Test/test/test-suites/...). The runner mounts this
+# at /tests inside the container.
+composite.test.suites.dir=${TESTS_DIR}
+
+# Comma-separated list of test-suite names to execute. The keyword
+# "all" (default) discovers every *.wmTestSuite under suites.dir.
+composite.test.suites=${TEST_SUITES}
+
+# ---------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------
+composite.test.report.html.dir=${REPORT_HTML_DIR}
+composite.test.report.raw.dir=${REPORT_RAW_DIR}
+composite.test.coverage.dir=${REPORT_COVERAGE_DIR}
+
+# ---------------------------------------------------------------------
+# Coverage configuration
+# ---------------------------------------------------------------------
+# Glob of services to include in coverage. Vendor packages (Wm*) are
+# excluded by default to keep the threshold meaningful for our code.
+composite.test.coverage.include=${COVERAGE_INCLUDE}
+composite.test.coverage.exclude=${COVERAGE_EXCLUDE}

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Test suite for hello.world:greet (HelloWorld package).
+
+    The .wmTestSuite/.wmTestCase XML files in this tree are the form
+    that webMethods Designer reads/writes when test resources live on
+    disk. The bundled Ant runner under WmTestSuite/code/ant/ picks
+    them up via the project layout (tests/unit/<P>Test/test/test-suites)
+    and the run-test-suites.properties file -- there is no extra
+    discovery configuration to maintain here.
+
+    Adding a test:
+      1. Author the .wmTestCase in Designer (or hand-edit and reload),
+         drop it under test/test-suites/Greet/.
+      2. Reference it from the <testCases> block below.
+      3. Re-run scripts/test-unit.sh -- the headless runner discovers
+         changes automatically.
+-->
+<wmTestSuite name="Greet" version="1.0">
+    <description>Unit tests for the hello.world:greet flow service.</description>
+    <package>HelloWorld</package>
+    <testCases>
+        <testCaseRef path="Greet/GreetHappyPath.wmTestCase"/>
+        <testCaseRef path="Greet/GreetMissingName.wmTestCase"/>
+        <testCaseRef path="Greet/GreetWithJdbcAudit.wmTestCase"/>
+    </testCases>
+</wmTestSuite>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    GreetWithJdbcAudit - exercises a variant of hello.world:greet that
+    writes an audit row via WmJDBCAdapter (insertGreeting). The JDBC
+    adapter call is mocked: no Postgres sidecar runs (acceptance
+    criterion d).
+
+    The mock matches on serviceName. The WmTestSuite engine substitutes
+    the mock response for the real INVOKE at runtime -- no aspect
+    weaving, no third-party AOP framework.
+-->
+<wmTestCase name="GreetWithJdbcAudit" version="1.0">
+    <description>greet with audit row insert; JDBC adapter call is mocked.</description>
+    <serviceUnderTest>hello.world:greetAndAudit</serviceUnderTest>
+    <inputPipeline format="xml"><![CDATA[
+<IData>
+    <value name="name">CI</value>
+</IData>
+    ]]></inputPipeline>
+    <expectedOutput>
+        <assertion type="equals" path="greeting" expected="Hello, CI!"/>
+        <assertion type="equals" path="audited" expected="true"/>
+    </expectedOutput>
+    <mocks>
+        <!--
+            Replace the JDBC adapter INVOKE with a canned response.
+            Matches by service name; no DB connection is opened.
+        -->
+        <mock>
+            <serviceName>hello.world.jdbc:insertGreeting</serviceName>
+            <responsePipeline format="xml"><![CDATA[
+<IData>
+    <value name="rowsAffected">1</value>
+    <value name="generatedId">42</value>
+</IData>
+            ]]></responsePipeline>
+        </mock>
+    </mocks>
+</wmTestCase>

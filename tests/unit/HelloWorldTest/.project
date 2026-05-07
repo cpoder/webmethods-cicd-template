@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+    <name>HelloWorldTest</name>
+    <comment>Unit-test project for the HelloWorld package. Authored in webMethods Designer; executed headlessly via the bundled Ant runner under WmTestSuite.</comment>
+    <projects>
+        <project>HelloWorld</project>
+    </projects>
+    <buildSpec>
+        <buildCommand>
+            <name>org.eclipse.jdt.core.javabuilder</name>
+            <arguments></arguments>
+        </buildCommand>
+    </buildSpec>
+    <natures>
+        <nature>com.softwareag.is.designer.testsuite.WmTestSuiteNature</nature>
+        <nature>com.softwareag.is.designer.WmFlowNature</nature>
+        <nature>org.eclipse.jdt.core.javanature</nature>
+    </natures>
+</projectDescription>

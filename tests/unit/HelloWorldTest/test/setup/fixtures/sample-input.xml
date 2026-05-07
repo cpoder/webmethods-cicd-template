@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Reusable input pipeline fixture. Test cases that expect a typical
+    "name" pipeline can reference this file via:
+        <inputPipeline format="xml" file="setup/fixtures/sample-input.xml"/>
+    rather than inlining the same CDATA payload everywhere.
+-->
+<IData>
+    <value name="name">World</value>
+</IData>

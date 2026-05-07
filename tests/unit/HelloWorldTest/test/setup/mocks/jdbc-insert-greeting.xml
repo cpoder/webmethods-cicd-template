@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Shared mock definition for the audit-row INSERT. Test cases that
+    need to bypass the real JDBC adapter for hello.world.jdbc:insertGreeting
+    can reference this file via:
+        <mock file="setup/mocks/jdbc-insert-greeting.xml"/>
+    The reference form is documented in docs/authoring-tests.md.
+-->
+<mock>
+    <serviceName>hello.world.jdbc:insertGreeting</serviceName>
+    <description>Canned response for the JDBC audit row INSERT. No DB needed.</description>
+    <responsePipeline format="xml"><![CDATA[
+<IData>
+    <value name="rowsAffected">1</value>
+    <value name="generatedId">42</value>
+</IData>
+    ]]></responsePipeline>
+</mock>

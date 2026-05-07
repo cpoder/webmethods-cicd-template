@@ -1,0 +1,30 @@
+# tests/unit/.gitignore
+#
+# The repo-root .gitignore globally ignores ".project", ".classpath",
+# "*.xml" (work-dir / IDE / coverage detritus elsewhere in the tree).
+# That accidentally hides the wmTestSuite/wmTestCase scaffolding under
+# this directory, so we re-include the bits we need.
+#
+# Re-include rules only work when the parent directory is itself NOT
+# ignored. tests/unit/ is not in any .gitignore -- so the negations
+# below will lift the files out of the global ignore.
+
+# --- Re-include Designer project metadata under tests/unit/. -------
+!*/.project
+!*/.classpath
+
+# --- Re-include the fixture XML and shared mock XML files. ---------
+# The .wmTestSuite and .wmTestCase files are NOT matched by *.xml
+# (different extensions), so they don't need re-inclusion.
+!*/test/setup/**/*.xml
+!*/test/setup/**/*.wmTestSuite
+!*/test/setup/**/*.wmTestCase
+
+# --- Ignore generated artifacts ------------------------------------
+
+# Rendered at CI time from run-test-suites.properties.tmpl; never
+# committed -- it carries real admin credentials.
+run-test-suites.properties
+
+# Output of the Eclipse Java builder when someone runs it locally.
+*/bin/

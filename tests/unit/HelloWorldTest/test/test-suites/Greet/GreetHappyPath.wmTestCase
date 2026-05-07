@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    GreetHappyPath - exercises hello.world:greet with a typical input
+    and asserts the formatted greeting string. No downstream INVOKEs,
+    so no mocks are needed.
+-->
+<wmTestCase name="GreetHappyPath" version="1.0">
+    <description>Happy path: greet("World") returns "Hello, World!".</description>
+    <serviceUnderTest>hello.world:greet</serviceUnderTest>
+    <inputPipeline format="xml"><![CDATA[
+<IData>
+    <value name="name">World</value>
+</IData>
+    ]]></inputPipeline>
+    <expectedOutput>
+        <assertion type="equals" path="greeting" expected="Hello, World!"/>
+        <assertion type="exists" path="greeting"/>
+    </expectedOutput>
+    <mocks/>
+</wmTestCase>

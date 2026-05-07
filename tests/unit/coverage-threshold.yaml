@@ -1,0 +1,39 @@
+# tests/unit/coverage-threshold.yaml
+#
+# Per-package code-coverage gates enforced by scripts/test-unit.sh.
+#
+# Format (deliberately minimal so the bash-side reader stays simple --
+# see test-unit.sh "parse_thresholds" for the parser):
+#
+#   defaults:
+#     min_line_coverage: <int|float>      # %, default 70
+#
+#   packages:
+#     <PackageName>:
+#       min_line_coverage: <int|float>    # %, overrides default
+#     <OtherPackage>:
+#       min_line_coverage: 0              # explicit waiver
+#
+# Rules of thumb
+# --------------
+# - Aim for >= 70% line coverage on services under
+#   packages/<P>/ns/<your-org>/... (see composite.test.coverage.include
+#   in run-test-suites.properties.tmpl). Vendor packages (Wm*) are
+#   excluded by default and not subject to this gate.
+# - Waive a package only with reviewer approval. A 0% threshold
+#   should carry a comment explaining why (e.g. shim package,
+#   experimental, deprecated).
+# - When raising the bar, raise both `defaults` and the matching
+#   per-package entry -- relying on `defaults` alone means new
+#   packages start at the new bar but existing ones inherit only on
+#   the next edit.
+
+defaults:
+  min_line_coverage: 70
+
+packages:
+  # Demo package introduced in Task 8.3. Higher-than-default because
+  # the demo doubles as the smoke test for this gate -- if the demo
+  # ever drops below 80%, that's noise we want to catch in PR review.
+  HelloWorld:
+    min_line_coverage: 80
