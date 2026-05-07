@@ -1,0 +1,40 @@
+# Build-context exclusions for the per-service image.
+#
+# Note on placement: the per-service image must be built with the repo
+# root as the build context (so scripts/, packages/, versions.env are
+# in scope), which means Docker will not auto-discover this file at
+# this path. To make it effective, either:
+#
+#   - rename it to docker/service/Dockerfile.dockerignore (BuildKit's
+#     per-Dockerfile lookup convention), or
+#   - mirror these patterns into a .dockerignore at the repo root.
+#
+# Even when this file is not auto-applied, the COPY commands in
+# docker/service/Dockerfile only pull scripts/ and packages/, so
+# nothing else can leak into the image regardless. These patterns
+# trim the build-context payload sent to the daemon.
+
+# Editor / IDE / VCS droppings
+**/.gitkeep
+**/.DS_Store
+**/.idea
+**/.vscode
+**/.settings
+**/*.swp
+**/*.swo
+**/Thumbs.db
+.git/
+
+# Build outputs (the script regenerates these from source).
+dist/
+
+# Not consumed by the per-service image build:
+#   - docs/, helm/  ship through other channels
+#   - config/       layered in at deploy time, not bake time
+#   - tests/        run in the wm-msr-base-test image, not this one
+#   - .github/      CI metadata, never baked
+docs/
+helm/
+config/
+tests/
+.github/
