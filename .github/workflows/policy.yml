@@ -1,0 +1,138 @@
+# Policy gates: project-specific guardrails enforced in CI.
+#
+# This workflow runs the five custom checks under scripts/policy/ in
+# parallel jobs (acceptance criterion: "CI workflow runs them in
+# parallel"). A sixth job runs the bats unit tests for the scripts
+# themselves -- so a broken script trips bats before it gets to fail
+# (or worse, pass) silently in production.
+#
+# Each policy job follows the same shape:
+#   1. checkout
+#   2. install jq + python3 (Ubuntu runner already has both)
+#   3. invoke scripts/policy/check-<thing>.sh
+#
+# Matrix would let us run them as one job but matrix failures collapse
+# into a single line in the PR review summary. Splitting into named
+# jobs is more verbose YAML but reads cleanly in the Checks tab and
+# lets a single failing gate be re-run independently.
+
+name: policy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same PR/branch -- the gate is
+# idempotent and the latest commit is the only one that matters.
+concurrency:
+  group: policy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # -------------------------------------------------------------------
+  # Bats unit tests for the policy scripts themselves.
+  # -------------------------------------------------------------------
+  bats:
+    name: bats (policy scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+
+      - name: Run bats suites
+        run: bats --tap scripts/policy/tests
+
+  # -------------------------------------------------------------------
+  # Image size <= 2 GiB.
+  #
+  # On PRs we don't have a built image yet, so we accept --size-bytes
+  # via a workflow input override (manual dispatch). For PRs the gate
+  # short-circuits to a no-op + warning rather than blocking; the real
+  # enforcement lives downstream of the image build (image-security
+  # workflow re-invokes this script with the real size).
+  # -------------------------------------------------------------------
+  image-size:
+    name: image size <= 2 GiB
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Self-test (synthetic 1 GiB)
+        run: ./scripts/policy/check-image-size.sh --size-bytes 1073741824
+
+      - name: Self-test (must reject 3 GiB)
+        run: |
+          set +e
+          ./scripts/policy/check-image-size.sh --size-bytes 3221225472
+          rc=$?
+          if [[ $rc -ne 2 ]]; then
+            echo "::error::policy script failed to flag a 3 GiB image (got rc=$rc)"
+            exit 1
+          fi
+          echo "Synthetic over-size correctly rejected (rc=2)."
+
+  # -------------------------------------------------------------------
+  # Reserved package names.
+  # -------------------------------------------------------------------
+  package-naming:
+    name: package naming
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run check
+        run: ./scripts/policy/check-package-naming.sh
+
+  # -------------------------------------------------------------------
+  # ACL hygiene (Anonymous flow services).
+  # -------------------------------------------------------------------
+  acl-hygiene:
+    name: ACL hygiene (Anonymous)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run check
+        run: ./scripts/policy/check-acl-hygiene.sh
+
+  # -------------------------------------------------------------------
+  # manifest.v3 completeness.
+  # -------------------------------------------------------------------
+  manifests:
+    name: manifest.v3 completeness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run check
+        run: ./scripts/policy/check-manifests.sh
+
+  # -------------------------------------------------------------------
+  # Extended settings vs MSR catalog.
+  #
+  # We use the offline catalog snapshot under scripts/policy/ so this
+  # job stays decoupled from a live MSR. Refresh the snapshot via
+  # `wm-mcp list_settings_catalog --output json` against an MSR of
+  # the version pinned in versions.env. A future enhancement can wire
+  # in a sidecar MSR + --container mode if drift becomes an issue.
+  # -------------------------------------------------------------------
+  extended-settings:
+    name: extended-settings vs MSR catalog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run check
+        run: |
+          ./scripts/policy/check-extended-settings.sh \
+            --catalog scripts/policy/extended-settings-catalog.fallback.json
