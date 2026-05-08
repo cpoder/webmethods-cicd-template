@@ -1,0 +1,17 @@
+{{ include "wm-microservice.fullname" . }} has been deployed in namespace {{ .Release.Namespace }}.
+
+Image    : {{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}
+Replicas : {{ if .Values.autoscaling.enabled }}HPA {{ .Values.autoscaling.minReplicas }}..{{ .Values.autoscaling.maxReplicas }} @ CPU {{ .Values.autoscaling.targetCPUUtilizationPercentage }}%{{ else }}fixed {{ .Values.replicaCount }}{{ end }}
+Service  : ClusterIP {{ include "wm-microservice.fullname" . }}:{{ .Values.service.port }}
+Secrets  : {{ if .Values.externalSecrets.enabled }}ExternalSecret -> {{ .Values.externalSecrets.secretStoreRef.name }} ({{ .Values.externalSecrets.secretStoreRef.kind }}){{ else if .Values.secret.enabled }}plain k8s Secret{{ else }}NONE (envFrom only references the ConfigMap){{ end }}
+
+Common operations:
+
+  kubectl --namespace {{ .Release.Namespace }} get pods -l "app.kubernetes.io/instance={{ .Release.Name }}"
+
+  kubectl --namespace {{ .Release.Namespace }} logs -l "app.kubernetes.io/instance={{ .Release.Name }}" --tail=100
+
+  # Hit the smoke endpoint via port-forward (matches what
+  # scripts/deploy/k8s-helm.sh does post-rollout):
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "wm-microservice.fullname" . }} 5555:{{ .Values.service.port }}
+  curl -fs http://localhost:5555{{ .Values.probes.readiness.path }}

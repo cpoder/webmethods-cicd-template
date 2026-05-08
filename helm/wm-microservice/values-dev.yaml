@@ -1,0 +1,57 @@
+# Dev environment overrides for wm-microservice.
+#
+# Layered on top of values.yaml by:
+#   helm upgrade --install wm-svc-dev helm/wm-microservice \
+#     -f helm/wm-microservice/values-dev.yaml \
+#     --set image.tag=<sha7>
+#
+# Smaller footprint than prod, looser logging, ESO disabled (dev keeps
+# secrets in a plain k8s Secret materialised by the deploy script).
+
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    cpu: "1"
+    memory: 2Gi
+
+env:
+  JAVA_MIN_MEM: 512m
+  JAVA_MAX_MEM: 1536m
+  SAG_IS_LOG_LEVEL: DEBUG
+  OTEL_SERVICE_NAME: wm-svc-dev
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+
+# Dev keeps secrets in a plain k8s Secret. The deploy script expects
+# CI to inject sensitive values via `--set-string secret.data.<KEY>=...`
+# from GitHub Environment Secrets at apply time. Only non-sensitive
+# placeholders may be committed here.
+externalSecrets:
+  enabled: false
+
+secret:
+  enabled: true
+  data: {}
+
+# Pod anti-affinity is preferred (soft) -- a single-node dev cluster
+# must still be able to schedule both replicas.
+
+probes:
+  liveness:
+    initialDelaySeconds: 180
+
+# Lower grace period in dev so a broken build redeploys faster.
+terminationGracePeriodSeconds: 60

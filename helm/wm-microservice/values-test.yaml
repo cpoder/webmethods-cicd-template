@@ -1,0 +1,48 @@
+# Test environment overrides for wm-microservice.
+#
+# Test runs the integration suite against this deployment, so the
+# service must be reasonably prod-shaped (tolerations, affinity,
+# resources) but the autoscaler stays narrow so nightly tests don't
+# burst capacity.
+
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1536Mi
+  limits:
+    cpu: "2"
+    memory: 3Gi
+
+env:
+  JAVA_MIN_MEM: 512m
+  JAVA_MAX_MEM: 2048m
+  SAG_IS_LOG_LEVEL: INFO
+  OTEL_SERVICE_NAME: wm-svc-test
+  OTEL_TRACES_SAMPLER_ARG: "0.5"
+
+# Test still uses a plain k8s Secret; integration tests inject the
+# fixture passwords (DB_PASSWORD_TESTDB etc) via --set-string at deploy
+# time. Switching to ESO would couple test runs to vault availability,
+# which is undesirable for an isolated test pipeline.
+externalSecrets:
+  enabled: false
+
+secret:
+  enabled: true
+  data: {}
+
+probes:
+  liveness:
+    initialDelaySeconds: 240

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wm-microservice.fullname" . }}
+  labels:
+    {{- include "wm-microservice.labels" . | nindent 4 }}
+data:
+  # Static keys from values.env (per-env defaults).
+  {{- range $k, $v := .Values.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  # Effective config keys passed from the deploy script via
+  # `--set-string config.data.<KEY>=...` (built from the merged
+  # config/base + config/<env> overlay, see scripts/apply-config.sh).
+  # Keys here override colliding keys in `env` above because Go
+  # template range emits them later in the map.
+  {{- range $k, $v := .Values.config.data }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

@@ -1,0 +1,227 @@
+# Default values for wm-microservice.
+#
+# This file is the canonical schema; per-env overrides live in
+# values-<env>.yaml and are layered on top via
+#   helm upgrade --install ... -f values-<env>.yaml
+# scripts/deploy/k8s-helm.sh handles that for you.
+#
+# Override conventions:
+#   - image.tag is intentionally empty here -- it MUST be supplied at
+#     deploy time (immutable SHA-pinned tag, never `latest`). The deploy
+#     script passes it via `--set image.tag=<sha7>` from $IMAGE_REF.
+#   - values.config.data is filled by the deploy script from the merged
+#     base+overlay effective.<env>.properties (so the ConfigMap stays
+#     in lock-step with what apply-config.sh applies after rollout).
+#   - externalSecrets.* describe how external-secrets-operator should
+#     pull from the corporate vault. Names follow docs/secrets.md.
+
+# ---- Replicas / scaling -------------------------------------------------
+# replicaCount is only used when autoscaling.enabled=false. When the HPA
+# is on, we omit `replicas:` from the Deployment so HPA owns it.
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  # Optional memory metric -- left disabled by default; MSR memory
+  # patterns are heap-bounded so CPU is the more reliable signal.
+  targetMemoryUtilizationPercentage: 0
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# ---- Image --------------------------------------------------------------
+image:
+  repository: ghcr.io/cpoder/wm-svc
+  # MUST be set at deploy time. The deploy script will refuse to install
+  # the chart if image.tag is empty/`latest`/`*-latest*`.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+# - name: ghcr-pull
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---- Service ------------------------------------------------------------
+# The chart only emits a ClusterIP service: external traffic is expected
+# to land via Ingress / Gateway API in front of this. Admin port 5544 is
+# deliberately not exposed -- apply-config.sh runs through `kubectl exec`
+# / `kubectl port-forward` instead of through a published service port.
+service:
+  type: ClusterIP
+  port: 5555
+  externalHttpsPort: 5443
+
+# ---- Probes -------------------------------------------------------------
+# Both probes hit the same wm.server:ping endpoint. wm.server:ping is in
+# the Anonymous ACL by default in MSR, so no auth header is required for
+# kubelet to call it. If your environment locks down that ACL, you must
+# either re-allow Anonymous on wm.server:ping or switch to an exec probe
+# that uses curl --user $ADMIN_USER:$ADMIN_PASSWORD against the secret.
+probes:
+  readiness:
+    path: /invoke/wm.server:ping
+    # IS startup is heavy; readiness lets the pod come up before
+    # traffic is sent to it.
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
+  liveness:
+    path: /invoke/wm.server:ping
+    # Generous initialDelay -- IS first-time package load takes minutes.
+    # If liveness fires during cold-start the pod gets killed and we
+    # loop forever. 240s lines up with the base image HEALTHCHECK
+    # start-period.
+    initialDelaySeconds: 240
+    periodSeconds: 30
+    timeoutSeconds: 10
+    successThreshold: 1
+    failureThreshold: 6
+  # Startup probe is preferred over a long liveness initialDelay on
+  # k8s >=1.20. Keep it disabled by default for chart-portability and
+  # toggle on per-env when needed.
+  startup:
+    enabled: false
+    path: /invoke/wm.server:ping
+    periodSeconds: 10
+    failureThreshold: 30
+
+# ---- Resources ----------------------------------------------------------
+# IS minimum is ~1Gi heap; default request gives JVM 1Gi heap room with
+# headroom for the JVM itself + native libs. Limits are 2x request.
+resources:
+  requests:
+    cpu: 500m
+    memory: 1536Mi
+  limits:
+    cpu: "2"
+    memory: 3Gi
+
+# ---- Static container env (rendered into the ConfigMap) -----------------
+# These match the keys in config/<env>/runtime.env.tmpl. The deploy
+# script appends keys from the rendered effective.<env>.properties under
+# `config.data` -- that file overrides any colliding keys here.
+env:
+  JAVA_MIN_MEM: 512m
+  JAVA_MAX_MEM: 2048m
+  SAG_IS_LOG_LEVEL: INFO
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+
+# ---- Effective config (rendered by deploy script, plain text) ----------
+# k8s-helm.sh sets `config.data` from the merged effective.<env>.properties
+# via `--set-file` or `--set` lines. Each entry becomes one key in the
+# ConfigMap and is mounted as an env var via envFrom.
+config:
+  data: {}
+
+# ---- Secrets ------------------------------------------------------------
+# Two mutually-exclusive backends are supported. Pick one per env.
+#
+# externalSecrets:    External Secrets Operator pulls from Vault / AWS
+#                     Secrets Manager / GCP SM into a k8s Secret. The
+#                     chart emits an ExternalSecret CR that references
+#                     a pre-existing ClusterSecretStore. Names follow
+#                     docs/secrets.md.
+#
+# secret:             Plain Kubernetes Secret. Useful for local kind
+#                     clusters (no ESO installed) and the chart's own
+#                     acceptance test. Values are committed to per-env
+#                     overrides ONLY for non-sensitive defaults; real
+#                     secrets must come from `--set-string` at deploy.
+externalSecrets:
+  enabled: false
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  data: []
+  # - secretKey: SAG_LICENSE_KEY
+  #   remoteRef:
+  #     key: secret/data/wmcicd/dev/sag-license
+  #     property: key
+  # - secretKey: SAG_IS_USER_ADMINISTRATOR_PASSWORD
+  #   remoteRef:
+  #     key: secret/data/wmcicd/dev/admin
+  #     property: password
+  # - secretKey: DB_PASSWORD_DEFAULTDB
+  #   remoteRef:
+  #     key: secret/data/wmcicd/dev/db/defaultdb
+  #     property: password
+
+secret:
+  enabled: false
+  data: {}
+  # SAG_IS_USER_ADMINISTRATOR_PASSWORD: ""
+  # SAG_LICENSE_KEY: ""
+
+# ---- ServiceAccount -----------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # IRSA / WorkloadIdentity bindings go here per env.
+
+# ---- Pod-level security -------------------------------------------------
+# IBM MSR images run as user sagadmin (uid 1724). Hard-pin both fsGroup
+# and runAsUser so the chart works on PSA "restricted" namespaces.
+podSecurityContext:
+  fsGroup: 1724
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1724
+  runAsGroup: 1724
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false  # IS writes to instance dir at runtime
+
+# ---- Scheduling ---------------------------------------------------------
+nodeSelector: {}
+
+tolerations: []
+
+# Default to soft pod anti-affinity so replicas spread across nodes
+# without making the chart unschedulable on a single-node kind cluster.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - wm-microservice
+          topologyKey: kubernetes.io/hostname
+
+# ---- Pod metadata -------------------------------------------------------
+podAnnotations: {}
+podLabels: {}
+
+# ---- Lifecycle ----------------------------------------------------------
+# IS shutdown can take 30-60s when there are open transactions; default
+# terminationGracePeriod must accommodate that.
+terminationGracePeriodSeconds: 90
+
+# preStop hook: invoke MSR shutdown via wm.server:shutdown so in-flight
+# work completes before SIGTERM. Disabled by default (requires admin
+# creds in the pod); enable per-env where the secret is mounted.
+lifecycle:
+  preStop:
+    enabled: false
+    # Path / port are baked-in here; if you need a custom auth header,
+    # mount the secret and call curl --user from a sidecar instead.
+    path: /invoke/wm.server:shutdown

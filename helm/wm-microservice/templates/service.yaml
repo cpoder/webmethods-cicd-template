@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wm-microservice.fullname" . }}
+  labels:
+    {{- include "wm-microservice.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.service.externalHttpsPort }}
+      targetPort: https
+      protocol: TCP
+      name: https
+  selector:
+    {{- include "wm-microservice.selectorLabels" . | nindent 4 }}

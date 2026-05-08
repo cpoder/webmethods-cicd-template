@@ -1,0 +1,88 @@
+# Prod environment overrides for wm-microservice.
+#
+# Tighter resources (with explicit limits), HPA scaled to handle
+# weekly peak, ESO ON for vault-backed secrets, hard pod anti-affinity
+# so two replicas cannot land on the same node, longer grace period
+# for in-flight transactions to drain.
+
+replicaCount: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    cpu: "4"
+    memory: 4Gi
+
+env:
+  JAVA_MIN_MEM: 1024m
+  JAVA_MAX_MEM: 3072m
+  SAG_IS_LOG_LEVEL: INFO
+  OTEL_SERVICE_NAME: wm-svc-prod
+  # Prod sample rate kept low to bound trace cost; on-call tooling can
+  # bump via ConfigMap edit + rolling restart for incident triage.
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+
+# Vault-backed secrets via External Secrets Operator. The chart emits
+# an ExternalSecret CR; the operator reconciles a k8s Secret from the
+# named ClusterSecretStore. Names follow docs/secrets.md.
+externalSecrets:
+  enabled: true
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  data:
+    - secretKey: SAG_LICENSE_KEY
+      remoteRef:
+        key: secret/data/wmcicd/prod/sag-license
+        property: key
+    - secretKey: SAG_IS_USER_ADMINISTRATOR_PASSWORD
+      remoteRef:
+        key: secret/data/wmcicd/prod/admin
+        property: password
+    - secretKey: DB_PASSWORD_DEFAULTDB
+      remoteRef:
+        key: secret/data/wmcicd/prod/db/defaultdb
+        property: password
+
+secret:
+  enabled: false
+
+# Hard pod anti-affinity: two prod replicas must NEVER share a node.
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - wm-microservice
+        topologyKey: kubernetes.io/hostname
+
+probes:
+  liveness:
+    initialDelaySeconds: 300
+    failureThreshold: 8
+
+# preStop drains in-flight work before SIGTERM. apply-config has a
+# matching admin-password secret mounted via envFrom, so the in-pod
+# wm.server:shutdown call can authenticate.
+lifecycle:
+  preStop:
+    enabled: true
+    path: /invoke/wm.server:shutdown
+
+terminationGracePeriodSeconds: 180

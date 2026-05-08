@@ -1,0 +1,119 @@
+{{- $secretEnabled := include "wm-microservice.secretEnabled" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wm-microservice.fullname" . }}
+  labels:
+    {{- include "wm-microservice.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "wm-microservice.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      annotations:
+        # Re-roll pods when ConfigMap changes (without this Helm leaves
+        # pods running on the old data). Same trick for the Secret.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if $secretEnabled }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret-external.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "wm-microservice.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "wm-microservice.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: msr
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - name: https
+              containerPort: {{ .Values.service.externalHttpsPort }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "wm-microservice.fullname" . }}
+            {{- if $secretEnabled }}
+            - secretRef:
+                name: {{ include "wm-microservice.secretName" . }}
+            {{- end }}
+          {{- if .Values.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            successThreshold: {{ .Values.probes.readiness.successThreshold }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            successThreshold: {{ .Values.probes.liveness.successThreshold }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- if .Values.lifecycle.preStop.enabled }}
+          lifecycle:
+            preStop:
+              # In-cluster wm.server:shutdown call. The endpoint requires
+              # admin auth; the SAG_IS_USER_ADMINISTRATOR_PASSWORD env var
+              # is mounted via secretRef above.
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    curl -fsS -u "Administrator:${SAG_IS_USER_ADMINISTRATOR_PASSWORD}" \
+                      "http://localhost:{{ .Values.service.port }}{{ .Values.lifecycle.preStop.path }}" || true
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
