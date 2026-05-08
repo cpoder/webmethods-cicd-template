@@ -46,7 +46,9 @@ ARG WM_MCP_SERVER_VERSION=v1.0.0
 # ---------------------------------------------------------------------
 FROM alpine:3.19 AS wm-mcp-fetch
 ARG WM_MCP_SERVER_VERSION
-ARG WM_MCP_SERVER_URL=https://github.com/cpoder/wm-mcp-server/releases/download/${WM_MCP_SERVER_VERSION}/wm-mcp-linux-x86_64
+# v2+ asset naming: wm-mcp-server-linux-{x86_64,aarch64}.
+# Override WM_MCP_SERVER_URL for arm64 builds.
+ARG WM_MCP_SERVER_URL=https://github.com/cpoder/wm-mcp-server/releases/download/${WM_MCP_SERVER_VERSION}/wm-mcp-server-linux-x86_64
 # Ephemeral fetch layer; nothing here ends up in the final image, so
 # pinning apk package versions would create churn for no benefit.
 # hadolint ignore=DL3018
