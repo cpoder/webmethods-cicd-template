@@ -1,0 +1,71 @@
+# Deploy descriptor for the dev environment.
+#
+# Consumed by scripts/deploy/docker-ssh.sh. This file is intentionally
+# NOT validated by schemas/config.schema.json -- it does not feed into
+# wm-mcp / IS configuration, only into the deploy orchestration. Its
+# shape is documented here and read by docker-ssh.sh via python+PyYAML.
+#
+# Two flows are supported:
+#   1. CD workflow: appleboy/ssh-action SSHes to target.host and runs
+#      `bash scripts/deploy/docker-ssh.sh ENV=dev IMAGE_REF=<digest>`
+#      on the host. The script then sees `--local` semantics because
+#      it's already on the docker host.
+#   2. Operator on a workstation: `scripts/deploy/docker-ssh.sh --env dev`
+#      reads target.host/user/ssh_key_file from this file and SSHes
+#      out. For the WSL acceptance test the target is localhost and
+#      --local can be passed to bypass SSH entirely.
+
+target:
+  kind: docker-ssh
+  # Hostname of the Docker host. For the WSL acceptance test this is
+  # `localhost` and the operator runs the script with --local. CI runs
+  # with TARGET_HOST overriding this via env.
+  host: localhost
+  user: deploy
+  port: 22
+  # Path to the SSH private key on the runner. CI writes
+  # ${{ secrets.TARGET_SSH_KEY }} to this path before invoking the
+  # script. --ssh-key-file CLI flag and TARGET_SSH_KEY_FILE env var
+  # both override.
+  ssh_key_file: ~/.ssh/wmcicd_deploy_dev
+
+container:
+  # Canonical container name. The deploy renames any existing container
+  # with this name to <name>-prev before starting the new one, then
+  # removes <name>-prev on success or leaves it stopped on failure.
+  name: wm-svc-dev
+  restart: always
+  # Image repository. The tag is supplied at deploy time via
+  # IMAGE_REF env var or --image-ref CLI flag and MUST be an immutable
+  # SHA-pinned tag (e.g. <MSR_VERSION>-svc-<sha7> or @sha256:...).
+  # `latest` is rejected by the script -- it defeats reproducibility.
+  image_repository: ghcr.io/cpoder/wm-svc
+  # Host:container port mappings published on the docker host. Match
+  # config/base/ports.yaml: primary HTTP on 5555, external HTTPS on
+  # 5443. The admin port (5544) is left unpublished -- apply-config
+  # talks to wm-mcp through `docker exec --container`, no host port
+  # required.
+  publish:
+    - "5555:5555"
+    - "5443:5443"
+  # Template for the per-container env file. Resolved at deploy time
+  # via scripts/lib/render-properties.sh (${NAME} -> env var NAME).
+  env_file_template: config/dev/runtime.env.tmpl
+
+smoke:
+  # Endpoint exercised after the new container starts. Hit via
+  # `docker exec <new-container> curl ...` so no host port is needed
+  # during the smoke phase.
+  path: /invoke/wm.server:ping
+  port: 5555
+  timeout_seconds: 120
+  # Polling interval while waiting for ping to return 200.
+  interval_seconds: 3
+
+apply_config:
+  enabled: true
+  # apply-config.sh is invoked with --container <new-container>, so
+  # wm-mcp runs inside the container against localhost:5555. No
+  # host-side admin port is exposed, no admin credentials traverse
+  # the network.
+  via_docker_exec: true
