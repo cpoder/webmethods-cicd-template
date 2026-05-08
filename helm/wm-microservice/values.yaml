@@ -179,7 +179,7 @@ secret:
 # on the toggle, not on CRD discovery, so render is always safe).
 #
 # The starter Grafana dashboard at docs/observability/dashboard.json
-# uses the SoftwareAG-published MSR panel set; import it into Grafana
+# uses the IBM-published MSR panel set; import it into Grafana
 # AFTER the ServiceMonitor lands its first scrape.
 metrics:
   enabled: true

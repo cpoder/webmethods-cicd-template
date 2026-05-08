@@ -9,6 +9,16 @@ This repo is published as a GitHub **template repository**. To start your own pi
 1. Click **Use this template → Create a new repository** on the GitHub page (or `gh repo create <you>/<repo> --template cpoder/webmethods-cicd-template --public`).
 2. Clone your new repo and replace the placeholders / fixtures listed below before merging anything to `main`.
 
+> **Hard prerequisite — IBM entitlement.** The MSR base image is pulled from IBM's entitled registry `cp.icr.io`. Before running `make image` (or letting CI do it), authenticate with your IBM entitlement key:
+>
+> ```
+> docker login cp.icr.io
+>   Username: cp
+>   Password: <entitlement-key from https://myibm.ibm.com/products-services/containerlibrary>
+> ```
+>
+> In CI, set `cp.icr.io` registry credentials as repo/org secrets and add a `docker/login-action` step before the build (the existing workflows assume registry auth is already wired). Without entitlement the build will 401 at the `FROM` line. The same applies to the `WM_TEST_SUITE_INSTALLER_URL` in `versions.env` — point it at your IBM Passport download or your corporate mirror; there is no working public default.
+
 What to customise after cloning:
 
 | File / area | What to change |
@@ -365,7 +375,8 @@ For questions or issues:
 
 ## Additional Resources
 
-- [webMethods Integration Server documentation](https://documentation.softwareag.com/)
+- [IBM webMethods Integration Server documentation](https://www.ibm.com/docs/en/webmethods-integration/wm-integration-server/11.1.0)
+- [IBM webMethods Helm charts (reference patterns)](https://github.com/IBM/webmethods-helm-charts)
 - [GitHub Actions documentation](https://docs.github.com/en/actions)
 - [Docker best practices](https://docs.docker.com/develop/dev-best-practices/)
 

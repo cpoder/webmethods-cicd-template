@@ -1,9 +1,10 @@
 apiVersion: v2
 name: wm-microservice
 description: |
-  Helm chart for the webMethods Microservices Runtime (MSR) container
-  built by this repository's CI pipeline. Mirrors the SoftwareAG MSR
-  Helm chart conventions: Deployment + ClusterIP Service + ConfigMap
+  Helm chart for the IBM webMethods Microservices Runtime (MSR) container
+  built by this repository's CI pipeline. Mirrors the conventions of
+  IBM's official chart at github.com/IBM/webmethods-helm-charts:
+  Deployment + ClusterIP Service + ConfigMap
   (rendered from base+overlay config) + ExternalSecret (resolved via
   external-secrets-operator) + HPA (CPU 70% / 2..10) + PDB (minAvailable 1).
 
@@ -15,7 +16,6 @@ version: 0.1.0
 # (MSR_VERSION). When that changes, bump this string too.
 appVersion: "11.1.0"
 kubeVersion: ">=1.27.0-0"
-icon: https://www.softwareag.com/favicon.ico
 home: https://github.com/cpoder/wmcicd
 sources:
   - https://github.com/cpoder/wmcicd
@@ -26,7 +26,7 @@ keywords:
   - webmethods
   - msr
   - integration
-  - softwareag
+  - ibm
 annotations:
   # Optional: artifacthub.io annotations could go here if the chart
   # is ever published to ArtifactHub.

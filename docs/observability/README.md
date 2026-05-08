@@ -194,7 +194,7 @@ curl -fsSL -X POST \
 
 ### Tuning the dashboard
 
-The metric names follow the SoftwareAG-published MSR Prometheus naming
+The metric names follow the IBM-published MSR Prometheus naming
 convention (`sag_is_*` for IS-specific metrics, `jvm_*` for the
 Micrometer JVM core). On real clusters, two things commonly need
 adjustment:
@@ -272,8 +272,8 @@ xdg-open https://grafana.example.com/d/wm-msr-starter
 
 ## 5. References
 
-- SoftwareAG MSR Prometheus endpoint:
-  https://docs.webmethods.io/microservices-runtime/msr-monitoring/
+- IBM webMethods MSR Prometheus endpoint:
+  https://www.ibm.com/docs/en/webmethods-integration/wm-integration-server/11.1.0
 - Prometheus Operator ServiceMonitor:
   https://prometheus-operator.dev/docs/operator/api/#servicemonitor
 - Grafana dashboard JSON schema:

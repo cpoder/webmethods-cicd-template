@@ -8,14 +8,14 @@
 #
 # Build (prod):
 #   docker build --target prod \
-#     --build-arg MSR_BASE_IMAGE=ibmcom/webmethods-microservicesruntime \
+#     --build-arg MSR_BASE_IMAGE=cp.icr.io/cp/webmethods/integration/ibm-webmethods-integration-microservicesruntime \
 #     --build-arg MSR_VERSION=11.1.0 \
 #     --build-arg WM_MCP_SERVER_URL=https://corporate-mirror/.../wm-mcp \
 #     -t wm-msr-base:11.1.0 docker/base
 #
 # Build (test):
 #   docker build --target test \
-#     --build-arg MSR_BASE_IMAGE=ibmcom/webmethods-microservicesruntime \
+#     --build-arg MSR_BASE_IMAGE=cp.icr.io/cp/webmethods/integration/ibm-webmethods-integration-microservicesruntime \
 #     --build-arg MSR_VERSION=11.1.0 \
 #     --build-arg WM_MCP_SERVER_URL=https://corporate-mirror/.../wm-mcp \
 #     --build-arg WM_TEST_SUITE_INSTALLER_URL=https://corporate-mirror/.../wm-test-suite.zip \
@@ -24,10 +24,18 @@
 # Build args MSR_BASE_IMAGE / MSR_VERSION / etc. default to the values
 # pinned in ../../versions.env. CI sources that file and forwards them
 # via --build-arg so this Dockerfile and the rest of the pipeline agree.
-# The IBM MSR image MUST be pulled from the corporate registry mirror,
-# never Docker Hub directly (rule from task spec; see CONTRIBUTING.md).
+#
+# Prereq: the IBM MSR image lives in IBM's entitled container registry
+# (cp.icr.io). Authenticate before building:
+#   docker login cp.icr.io
+#     Username: cp
+#     Password: <entitlement-key from https://myibm.ibm.com/products-services/containerlibrary>
+# The build's first FROM line will 401 without a valid login. Pulling
+# directly from Docker Hub is NOT supported -- the legacy
+# `ibmcom/webmethods-microservicesruntime` path returns object-not-found
+# and is not a working mirror.
 
-ARG MSR_BASE_IMAGE=ibmcom/webmethods-microservicesruntime
+ARG MSR_BASE_IMAGE=cp.icr.io/cp/webmethods/integration/ibm-webmethods-integration-microservicesruntime
 ARG MSR_VERSION=11.1.0
 ARG WM_MCP_SERVER_VERSION=v1.0.0
 
