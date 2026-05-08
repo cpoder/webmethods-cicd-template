@@ -1,0 +1,60 @@
+# Deploy descriptor for the prod environment.
+#
+# Production uses Kubernetes (target.kind: kubernetes-helm), not the
+# docker-ssh single-VM backend that dev/test use. The file shape is
+# the same so cd.yml can dispatch on `target.kind`, but the fields
+# below are read by scripts/deploy/k8s-helm.sh (NOT docker-ssh.sh).
+#
+# Consumed by scripts/deploy/k8s-helm.sh:
+#   - target.kind / target.namespace -> --namespace
+#   - container.name                 -> --release  (helm release name)
+#   - container.image_repository     -> image.repository (chart value)
+#   - smoke.path / smoke.port        -> post-deploy probe through
+#                                       kubectl port-forward
+#   - apply_config.enabled           -> whether to run apply-config.sh
+#                                       after rollout completes
+#
+# Some docker-ssh-only fields (publish, restart, env_file_template,
+# ssh_key_file) are intentionally omitted -- the chart owns those.
+
+target:
+  kind: kubernetes-helm
+  # k8s namespace. Defaults to wm-svc-prod when omitted; we set it
+  # explicitly so `kubectl get -n` from the runbook always works.
+  namespace: wm-svc-prod
+  # KUBECONFIG is not committed. CI provides it via the
+  # TARGET_KUBECONFIG_B64 environment secret (decoded to a 0600
+  # tmpfile by k8s-helm.sh).
+  kubeconfig_secret: TARGET_KUBECONFIG_B64
+
+container:
+  # `name` doubles as the helm release name -- k8s-helm.sh defaults
+  # --release to wm-svc-<env> when this is omitted; setting it here
+  # makes the rollback workflow easier to audit.
+  name: wm-svc-prod
+  image_repository: ghcr.io/cpoder/wm-svc
+
+smoke:
+  path: /invoke/wm.server:ping
+  port: 5555
+  # Prod takes the longest to come up because of higher initial-delay
+  # liveness probes (300s; see helm/wm-microservice/values-prod.yaml).
+  # Smoke timeout matches that headroom.
+  timeout_seconds: 360
+  interval_seconds: 5
+
+apply_config:
+  enabled: true
+  # k8s deploys talk to wm-mcp via `kubectl port-forward` rather than
+  # docker exec; via_docker_exec is meaningful only for docker-ssh.
+  via_docker_exec: false
+
+# Pre-deploy DB snapshot (Task 7.3 acceptance criterion). Before the
+# new image rolls out, cd.yml exec's wm-mcp jdbc_pool_export_schema
+# inside one of the live prod pods and uploads the JSON as a workflow
+# artifact named db-snapshot-<sha>.json for emergency rollback.
+db_snapshot:
+  enabled: true
+  # Pool name passed to wm-mcp jdbc_pool_export_schema. `defaultDB`
+  # matches config/base/jdbc-pools.yaml.
+  pool: defaultDB

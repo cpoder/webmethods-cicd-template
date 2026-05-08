@@ -1,0 +1,39 @@
+# Deploy descriptor for the test environment.
+#
+# Same backend as dev (target.kind: docker-ssh) -- a single-VM Docker
+# host serving the integration / staging environment. Production uses
+# kubernetes-helm; see config/prod/deploy.yaml.
+#
+# Consumed by scripts/deploy/docker-ssh.sh -- the file shape mirrors
+# config/dev/deploy.yaml. CI overrides target.host/user/ssh_key_file
+# via env vars (TARGET_HOST/TARGET_USER/TARGET_SSH_KEY_FILE) so the
+# committed file can stay placeholder-free of test infrastructure
+# coordinates.
+
+target:
+  kind: docker-ssh
+  host: wm-test.internal
+  user: deploy
+  port: 22
+  ssh_key_file: ~/.ssh/wmcicd_deploy_test
+
+container:
+  name: wm-svc-test
+  restart: always
+  image_repository: ghcr.io/cpoder/wm-svc
+  publish:
+    - "5555:5555"
+    - "5443:5443"
+  env_file_template: config/test/runtime.env.tmpl
+
+smoke:
+  path: /invoke/wm.server:ping
+  port: 5555
+  # Test takes longer than dev because the integration profile spins
+  # up more JDBC pools / JMS aliases / Kafka consumers on boot.
+  timeout_seconds: 180
+  interval_seconds: 3
+
+apply_config:
+  enabled: true
+  via_docker_exec: true
