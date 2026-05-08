@@ -25,7 +25,7 @@ This repo is published as a GitHub **template repository**. To start your own pi
 >    docker pull ibmwebmethods.azurecr.io/webmethods-microservicesruntime:12.1
 >    ```
 >
-> In CI, store the token name/password as repo or org secrets and add a `docker/login-action` step before the build job. Without a valid token the build will 401 at the `FROM` line. The same applies to `WM_TEST_SUITE_INSTALLER_URL` in `versions.env` — point it at your IBM Passport download or your corporate mirror; there is no working public default.
+> In CI, set repo-level secrets `IBMWM_REGISTRY_USER` (token name) and `IBMWM_REGISTRY_TOKEN` (token password). The `base-image.yml` and `ci.yml/unit-tests` jobs already include `docker/login-action` steps wired to those secret names. Without them the build will 401 at the `FROM` line. The same applies to `WM_TEST_SUITE_INSTALLER_URL` in `versions.env` — point it at your IBM Passport download or your corporate mirror; there is no working public default. See [`docs/secrets.md`](docs/secrets.md) for the full secret matrix.
 >
 > Tag convention: `:12.1` always points to the latest core fix on the 12.1 line; pin to `:12.1.0.X` (e.g. `12.1.0.1` = Core Fix 1) for reproducible production builds.
 

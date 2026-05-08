@@ -78,6 +78,24 @@ same workflow YAML works against any of the three.
 
 > **Note.** `REGISTRY_USER` / `REGISTRY_TOKEN` already exist as
 > repo-level secrets for `.github/workflows/base-image.yml` (Task 1.2).
+
+### IBM webMethods Container Registry (source of MSR FROM image)
+
+These are **repo-level** secrets (not per-environment), required by
+`base-image.yml` and the `unit-tests` job in `ci.yml` to authenticate
+to `ibmwebmethods.azurecr.io` for pulling the MSR base image.
+
+| GitHub Secret name      | Used by                                            | Notes                                                                                              |
+| ----------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `IBMWM_REGISTRY_USER`   | `base-image.yml`, `ci.yml/unit-tests` Docker login | Registry token **name** minted at https://containers.webmethods.io after IBMid (w3id SSO) sign-in. |
+| `IBMWM_REGISTRY_TOKEN`  | `base-image.yml`, `ci.yml/unit-tests` Docker login | Matching token **password**. The portal does not show this again — store it on first mint.        |
+
+> **Mint procedure.** Sign in at https://containers.webmethods.io with
+> your IBMid (w3id SSO for IBM employees), follow the prompt to
+> generate a registry token, copy both the name and the password, and
+> set them as repo-level secrets in
+> **Settings → Secrets and variables → Actions**. Both `base-image.yml`
+> and `ci.yml/unit-tests` will 401 at the FROM line without these.
 > They are duplicated into each Environment so per-env scoping is
 > possible later (e.g. a separate prod registry account) without a
 > workflow change.
