@@ -2,6 +2,28 @@
 
 This repository contains the source code, configuration, and deployment artifacts for webMethods Integration Server (IS) microservices with a complete CI/CD pipeline on GitHub Actions.
 
+## Using this template
+
+This repo is published as a GitHub **template repository**. To start your own pipeline:
+
+1. Click **Use this template → Create a new repository** on the GitHub page (or `gh repo create <you>/<repo> --template cpoder/webmethods-cicd-template --public`).
+2. Clone your new repo and replace the placeholders / fixtures listed below before merging anything to `main`.
+
+What to customise after cloning:
+
+| File / area | What to change |
+|---|---|
+| `packages/HelloWorld/` | Demo package — replace with your real IS packages, or keep alongside as a smoke artifact |
+| `CODEOWNERS` | Replace `@<org>/<team>` placeholder team handles with your org's teams |
+| `helm/wm-microservice/values.yaml` | Image registry, hostnames, resource sizing for your environments |
+| `config/{dev,test,prod}/` | Environment-specific overlays for connection strings, ports, ACLs |
+| `scripts/setup-environments.sh` | Update `ENVIRONMENTS` if you have envs beyond `dev/test/prod`, then `--apply` |
+| `scripts/setup/branch-protection.sh` | Run `--apply --bot-app <your-release-bot-slug>` once `main` exists |
+| `docker/base/Dockerfile` | Point at your org's `wm-mcp-server` binary / registry |
+| GitHub Environments + Secrets | Seed per `docs/secrets.md` matrix (registry creds, MSR admin, deploy keys) |
+
+Then run `make build && make test && make image` locally to confirm the pipeline runs end-to-end before pushing.
+
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
@@ -17,7 +39,7 @@ Before you begin, ensure you have the following installed:
 ### Optional Tools
 
 - **wm-mcp-server** - webMethods Model Context Protocol server for AI-assisted development
-  - Documentation: [wm-mcp-server docs](https://github.com/your-org/wm-mcp-server)
+  - Provided by your organisation; the base image (`docker/base/Dockerfile`) fetches the binary at build time
 
 ## Repository Structure
 
@@ -169,7 +191,7 @@ docker compose down
      matrix-listed secret is set
 
 4. **Update CI/CD workflow**:
-   - Edit `.github/workflows/deploy.yml`
+   - Edit `.github/workflows/cd.yml`
    - Add the new environment to the deployment matrix
 
 5. **Update deployment scripts**:
@@ -216,7 +238,7 @@ Located in `tests/unit/`, using wm-jbehave framework:
 make test
 
 # Run specific package tests
-./scripts/run-unit-tests.sh YourPackageName
+./scripts/test-unit.sh --package YourPackageName
 ```
 
 ### Integration Tests
@@ -226,7 +248,7 @@ Located in `tests/integration/`, using newman/k6/REST-assured:
 make integration-test
 
 # Run specific test suite
-./scripts/run-integration-tests.sh api-tests
+./scripts/test-integration.sh --suite api-tests
 ```
 
 ## CI/CD Pipeline
@@ -343,11 +365,10 @@ For questions or issues:
 
 ## Additional Resources
 
-- [wm-mcp-server documentation](https://github.com/your-org/wm-mcp-server) - AI-assisted development tools
 - [webMethods Integration Server documentation](https://documentation.softwareag.com/)
 - [GitHub Actions documentation](https://docs.github.com/en/actions)
 - [Docker best practices](https://docs.docker.com/develop/dev-best-practices/)
 
 ## License
 
-[Specify your license here]
+Apache License 2.0 — see [LICENSE](LICENSE).
