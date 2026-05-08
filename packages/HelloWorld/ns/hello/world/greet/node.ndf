@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Node descriptor for the flow service hello.world:greet.
+
+    Designer writes one node.ndf per IS asset on disk; the file
+    declares the asset's type, ACL, signatures, and folder ancestry.
+    The runtime reads it alongside flow.xml when the package loads.
+    Treat the XML below as opaque to the build/test pipeline — none
+    of the helper scripts under scripts/ parse this file.
+-->
+<Values version="2.0">
+    <value name="node_type">flow_svc</value>
+    <value name="node_subtype">unknown</value>
+    <value name="package">HelloWorld</value>
+    <value name="folder">hello.world</value>
+    <value name="ns_name">greet</value>
+    <value name="acl_runtime">Anonymous</value>
+    <value name="node_comment">// public-by-design - HelloWorld demo flow service exercised by the post-deploy smoke runner; no auth required.</value>
+    <value name="run_as">caller</value>
+    <value name="audit_setting">never</value>
+    <value name="cache_results">false</value>
+
+    <record name="signature" javaclass="com.wm.util.Values">
+        <record name="input" javaclass="com.wm.util.Values">
+            <value name="content_type">structure</value>
+            <record name="fields" javaclass="com.wm.util.Values">
+                <record name="name" javaclass="com.wm.util.Values">
+                    <value name="type">string</value>
+                    <value name="optional">false</value>
+                    <value name="description">Caller's name. Empty/null falls back to "stranger".</value>
+                </record>
+            </record>
+        </record>
+        <record name="output" javaclass="com.wm.util.Values">
+            <value name="content_type">structure</value>
+            <record name="fields" javaclass="com.wm.util.Values">
+                <record name="greeting" javaclass="com.wm.util.Values">
+                    <value name="type">string</value>
+                    <value name="description">Formatted greeting including the env tag.</value>
+                </record>
+                <record name="envName" javaclass="com.wm.util.Values">
+                    <value name="type">string</value>
+                    <value name="description">Resolved value of the ENV_NAME global variable, or "unknown".</value>
+                </record>
+            </record>
+        </record>
+    </record>
+</Values>

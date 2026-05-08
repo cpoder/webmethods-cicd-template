@@ -45,9 +45,13 @@ file_to_def() {
 }
 
 # Files we explicitly do NOT validate.
+# - extended-settings.properties: raw .properties, see docs/config-merge.md
+# - deploy.yaml: deploy-orchestration metadata read by scripts/deploy/*.sh,
+#   not consumed by wm-mcp; intentionally has no entry in $defs (Task 7.1)
 is_skipped_file() {
     case "$(basename "$1")" in
         .gitkeep|extended-settings.properties|README.md|README) return 0 ;;
+        deploy.yaml|deploy.yml) return 0 ;;
         *) return 1 ;;
     esac
 }

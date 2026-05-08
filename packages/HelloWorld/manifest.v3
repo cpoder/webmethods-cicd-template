@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    HelloWorld package manifest (webMethods Integration Server v3 schema).
+
+    Demo / pipeline-acceptance package introduced in plan Task 8.3.
+    A single flow service `hello.world:greet` returns a greeting that
+    includes the env name, sourced from the Global Variable `ENV_NAME`.
+    config/{dev,test,prod}/global-variables.yaml each set ENV_NAME to
+    the matching env name; the smoke test asserts that the deployed
+    service in each env returns its env tag in the response body.
+
+    This package depends only on MSR built-ins (WmRoot, WmPublic) so
+    it loads on a vanilla wm-msr-base image without any extra packages.
+-->
+<Manifest>
+    <version>1.0.0</version>
+    <description>Sample greeting service used as the pipeline acceptance test.</description>
+    <enabled>true</enabled>
+    <requires>
+        <package>WmRoot</package>
+        <package>WmPublic</package>
+    </requires>
+    <no-startup-needed/>
+    <startup_services/>
+    <shutdown_services/>
+    <replicate_services/>
+</Manifest>

@@ -1,0 +1,16 @@
+# IS Global Variables - prod sparse overlay.
+# Only overrides; everything not listed here inherits from config/base/.
+# Identity field: variables[].key. See docs/config-merge.md.
+
+variables:
+  - key: ENV_NAME
+    value: prod
+    description: Stamps responses (e.g. HelloWorld:greet) with the prod env tag.
+
+  - key: LOG_LEVEL
+    value: INFO
+    description: Production stays at INFO; flip to DEBUG only via incident.
+
+  - key: TRACE_SAMPLING_RATIO
+    value: 0.05
+    description: Sample 5% of traces in prod to keep observability spend bounded.

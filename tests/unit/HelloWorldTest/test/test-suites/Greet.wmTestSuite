@@ -20,8 +20,7 @@
     <description>Unit tests for the hello.world:greet flow service.</description>
     <package>HelloWorld</package>
     <testCases>
-        <testCaseRef path="Greet/GreetHappyPath.wmTestCase"/>
-        <testCaseRef path="Greet/GreetMissingName.wmTestCase"/>
-        <testCaseRef path="Greet/GreetWithJdbcAudit.wmTestCase"/>
+        <testCaseRef path="Greet/HappyPath.wmTestCase"/>
+        <testCaseRef path="Greet/EmptyName.wmTestCase"/>
     </testCases>
 </wmTestSuite>

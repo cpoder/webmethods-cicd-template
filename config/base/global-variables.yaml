@@ -4,6 +4,15 @@
 # Validated against $defs/GlobalVariables in schemas/config.schema.json.
 
 variables:
+  - key: ENV_NAME
+    value: unknown
+    description: |
+      Active deployment environment ("dev", "test", "prod"). Read by
+      hello.world:greet (HelloWorld package); the demo asserts that
+      each env's deployed service returns its own ENV_NAME in the
+      response payload. Per-env overlays under config/<env>/ shadow
+      this default.
+
   - key: SERVICE_NAME
     value: order-processing
     description: Logical service identifier surfaced in logs and traces.

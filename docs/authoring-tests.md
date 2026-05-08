@@ -87,8 +87,8 @@ Actions Checks tab.
     <description>Unit tests for hello.world:greet.</description>
     <package>HelloWorld</package>
     <testCases>
-        <testCaseRef path="Greet/GreetHappyPath.wmTestCase"/>
-        <testCaseRef path="Greet/GreetMissingName.wmTestCase"/>
+        <testCaseRef path="Greet/HappyPath.wmTestCase"/>
+        <testCaseRef path="Greet/EmptyName.wmTestCase"/>
     </testCases>
 </wmTestSuite>
 ```
@@ -101,8 +101,8 @@ any downstream service the SUT invokes.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<wmTestCase name="GreetHappyPath" version="1.0">
-    <description>greet("World") returns "Hello, World!".</description>
+<wmTestCase name="HappyPath" version="1.0">
+    <description>greet("World") returns "Hello, World! (env: unknown)".</description>
     <serviceUnderTest>hello.world:greet</serviceUnderTest>
     <inputPipeline format="xml"><![CDATA[
 <IData>
@@ -110,8 +110,8 @@ any downstream service the SUT invokes.
 </IData>
     ]]></inputPipeline>
     <expectedOutput>
-        <assertion type="equals" path="greeting" expected="Hello, World!"/>
         <assertion type="exists" path="greeting"/>
+        <assertion type="equals" path="greeting" expected="Hello, World! (env: unknown)"/>
     </expectedOutput>
     <mocks/>
 </wmTestCase>

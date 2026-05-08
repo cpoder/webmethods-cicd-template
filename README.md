@@ -323,6 +323,16 @@ gate failures, etc.).
 For a deploy-failed-in-prod page, jump straight to
 [`docs/runbook.md` §0](docs/runbook.md#0-pager-response--deploy-failed-in-prod-what-do-i-do).
 
+## End-to-end demo
+
+The pipeline acceptance test — a single PR adding the
+[`HelloWorld`](packages/HelloWorld/) package, going from PR-open →
+green CI → merged → dev → test → prod with each env's deployed
+service returning a greeting tagged with its own env name — is
+walked through step-by-step in [`docs/demo.md`](docs/demo.md). That
+document also lists the screenshots / Loom shots to capture for
+sign-off.
+
 ## Support
 
 For questions or issues:

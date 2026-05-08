@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Folder node descriptor for the hello/ namespace branch. Designer
+    writes one of these per non-leaf folder in the namespace tree;
+    they exist purely so the package's namespace tree can be walked
+    without chasing service files.
+-->
+<Values version="2.0">
+    <value name="node_type">interface</value>
+    <value name="package">HelloWorld</value>
+    <value name="ns_name">hello</value>
+</Values>

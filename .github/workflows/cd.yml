@@ -304,13 +304,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run smoke
+      - name: Run MSR smoke
         env:
           SMOKE_TARGET: ${{ vars.DEV_URL }}
           MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
           MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
           SMOKE_REPORT: reports/smoke/junit.xml
         run: bash tests/integration/smoke/run.sh
+      - name: Run HelloWorld smoke (env tag assertion)
+        env:
+          SMOKE_TARGET: ${{ vars.DEV_URL }}
+          EXPECTED_ENV_NAME: dev
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          SMOKE_REPORT: reports/smoke/helloworld-junit.xml
+        run: bash tests/integration/smoke/HelloWorld.smoke.sh
       - name: Upload smoke report
         if: always()
         uses: actions/upload-artifact@v4
@@ -414,13 +422,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run smoke
+      - name: Run MSR smoke
         env:
           SMOKE_TARGET: ${{ vars.TEST_URL }}
           MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
           MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
           SMOKE_REPORT: reports/smoke/junit.xml
         run: bash tests/integration/smoke/run.sh
+      - name: Run HelloWorld smoke (env tag assertion)
+        env:
+          SMOKE_TARGET: ${{ vars.TEST_URL }}
+          EXPECTED_ENV_NAME: test
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          SMOKE_REPORT: reports/smoke/helloworld-junit.xml
+        run: bash tests/integration/smoke/HelloWorld.smoke.sh
       - name: Upload smoke report
         if: always()
         uses: actions/upload-artifact@v4
@@ -557,13 +573,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run smoke
+      - name: Run MSR smoke
         env:
           SMOKE_TARGET: ${{ vars.PROD_URL }}
           MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
           MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
           SMOKE_REPORT: reports/smoke/junit.xml
         run: bash tests/integration/smoke/run.sh
+      - name: Run HelloWorld smoke (env tag assertion)
+        env:
+          SMOKE_TARGET: ${{ vars.PROD_URL }}
+          EXPECTED_ENV_NAME: prod
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          SMOKE_REPORT: reports/smoke/helloworld-junit.xml
+        run: bash tests/integration/smoke/HelloWorld.smoke.sh
       - name: Upload smoke report
         if: always()
         uses: actions/upload-artifact@v4

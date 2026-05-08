@@ -4,6 +4,10 @@
 # new keys are appended). See docs/config-merge.md.
 
 variables:
+  - key: ENV_NAME
+    value: dev
+    description: Stamps responses (e.g. HelloWorld:greet) with the dev env tag.
+
   - key: LOG_LEVEL
     value: DEBUG
     description: Verbose logging in dev for development convenience.

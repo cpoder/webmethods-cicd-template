@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    HappyPath - hello.world:greet returns a name-bearing greeting.
+
+    Unit tests run against a fresh wm-msr-base-test container with no
+    apply-config step, so ENV_NAME is unset. The flow defaults envName
+    to "unknown" in that case, which is what we assert here. The
+    integration test (tests/integration/postman/HelloWorld.json) and
+    the smoke tests (tests/integration/smoke/HelloWorld.smoke.sh) both
+    run against a fully-configured MSR and assert on the env-specific
+    tag (dev/test/prod).
+-->
+<wmTestCase name="HappyPath" version="1.0">
+    <description>greet("World") returns "Hello, World! (env: unknown)" when no GV is set.</description>
+    <serviceUnderTest>hello.world:greet</serviceUnderTest>
+    <inputPipeline format="xml"><![CDATA[
+<IData>
+    <value name="name">World</value>
+</IData>
+    ]]></inputPipeline>
+    <expectedOutput>
+        <assertion type="exists" path="greeting"/>
+        <assertion type="equals" path="greeting" expected="Hello, World! (env: unknown)"/>
+        <assertion type="equals" path="envName"  expected="unknown"/>
+    </expectedOutput>
+    <mocks/>
+</wmTestCase>

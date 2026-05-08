@@ -236,27 +236,59 @@ run_newman() {
     fi
 
     echo ">>> Running Newman suite"
-    local col="${REPO_ROOT}/tests/integration/postman/collection.json"
     local envf="${REPO_ROOT}/tests/integration/postman/dev.postman_environment.json"
     local reporters=cli,junit
-    local html_args=()
+    local supports_htmlextra=0
     if newman run --help 2>/dev/null | grep -q htmlextra; then
         reporters=cli,junit,htmlextra
-        html_args=(--reporter-htmlextra-export "${REPORTS_DIR}/newman/report.html")
+        supports_htmlextra=1
     fi
-    if newman run "${col}" \
-        --environment "${envf}" \
-        --env-var "msrBaseUrl=${MSR_BASE_URL}" \
-        --env-var "adminUser=${MSR_ADMIN_USER}" \
-        --env-var "adminPassword=${MSR_ADMIN_PASSWORD}" \
-        --reporters "${reporters}" \
-        --reporter-junit-export "${REPORTS_DIR}/newman/junit.xml" \
-        "${html_args[@]}" \
-        --insecure
-    then
-        echo "    Newman: OK"
-    else
-        echo "    Newman: FAIL"
+
+    # Discover every postman collection under tests/integration/postman/.
+    # `*.environment.json` files are environments, not collections; skip
+    # them. Each collection runs as its own Newman invocation so a per-
+    # collection JUnit lands at reports/integration/newman/<name>.xml.
+    local cols=()
+    while IFS= read -r -d '' f; do
+        case "$(basename "$f")" in
+            *.environment.json|*.postman_environment.json) continue ;;
+            *) cols+=("$f") ;;
+        esac
+    done < <(find "${REPO_ROOT}/tests/integration/postman" -maxdepth 1 -type f -name '*.json' -print0 | sort -z)
+
+    if (( ${#cols[@]} == 0 )); then
+        echo "WARN: no postman collections discovered under tests/integration/postman/" >&2
+        SUITE_FAILURES+=("newman:no-collections")
+        return 0
+    fi
+
+    local newman_failed=0
+    for col in "${cols[@]}"; do
+        local cname
+        cname=$(basename "${col}" .json)
+        echo "    > collection: ${cname}"
+        local html_args=()
+        if (( supports_htmlextra == 1 )); then
+            html_args=(--reporter-htmlextra-export "${REPORTS_DIR}/newman/${cname}.html")
+        fi
+        if newman run "${col}" \
+            --environment "${envf}" \
+            --env-var "msrBaseUrl=${MSR_BASE_URL}" \
+            --env-var "adminUser=${MSR_ADMIN_USER}" \
+            --env-var "adminPassword=${MSR_ADMIN_PASSWORD}" \
+            --env-var "expectedEnvName=${EXPECTED_ENV_NAME:-test}" \
+            --reporters "${reporters}" \
+            --reporter-junit-export "${REPORTS_DIR}/newman/${cname}.junit.xml" \
+            "${html_args[@]}" \
+            --insecure
+        then
+            echo "      ${cname}: OK"
+        else
+            echo "      ${cname}: FAIL"
+            newman_failed=1
+        fi
+    done
+    if (( newman_failed == 1 )); then
         SUITE_FAILURES+=("newman")
     fi
 }

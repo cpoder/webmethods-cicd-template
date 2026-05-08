@@ -1,0 +1,154 @@
+{
+  "info": {
+    "_postman_id": "8a7d4f2e-6b9c-4d1f-9e3a-helloworld-2026",
+    "name": "HelloWorld - greet integration",
+    "description": "Newman-driven REST integration test for HelloWorld:greet (introduced in plan Task 8.3 as the pipeline acceptance package).\n\nThe MSR under test has had `apply-config.sh --env test` run against it before this collection executes (see scripts/test-integration.sh), so the ENV_NAME global variable is set to 'test'. This collection POSTs a sample payload and asserts the returned greeting contains BOTH the caller-supplied name AND the env tag - exactly the behaviour the smoke runner asserts in dev/test/prod after deploy.\n\nVariables consumed: `msrBaseUrl`, `adminUser`, `adminPassword`, `expectedEnvName` - sourced from tests/integration/postman/dev.postman_environment.json (the script clones the env template per target run).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      { "key": "username", "value": "{{adminUser}}", "type": "string" },
+      { "key": "password", "value": "{{adminPassword}}", "type": "string" }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('correlationId')) {",
+          "  const cid = 'helloworld-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);",
+          "  pm.collectionVariables.set('correlationId', cid);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "correlationId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "greet - happy path with name",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Correlation-Id", "value": "{{correlationId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"newman\"\n}"
+        },
+        "url": {
+          "raw": "{{msrBaseUrl}}/invoke/hello.world:greet",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["invoke", "hello.world:greet"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('responded under 2s', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+              "let body;",
+              "pm.test('response is JSON', () => {",
+              "  body = pm.response.json();",
+              "  pm.expect(body).to.be.an('object');",
+              "});",
+              "pm.test('greeting field is present', () => {",
+              "  pm.expect(body).to.have.property('greeting');",
+              "});",
+              "pm.test('greeting contains the caller-supplied name', () => {",
+              "  pm.expect(body.greeting).to.include('newman');",
+              "});",
+              "const expectedEnv = pm.variables.get('expectedEnvName') || 'test';",
+              "pm.test(`greeting carries the env tag (env: ${expectedEnv})`, () => {",
+              "  pm.expect(body.greeting).to.include(`env: ${expectedEnv}`);",
+              "});",
+              "pm.test('envName field equals the configured ENV_NAME', () => {",
+              "  pm.expect(body.envName).to.eql(expectedEnv);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "greet - empty name falls back to stranger",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Correlation-Id", "value": "{{correlationId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"\"\n}"
+        },
+        "url": {
+          "raw": "{{msrBaseUrl}}/invoke/hello.world:greet",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["invoke", "hello.world:greet"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('greeting falls back to the stranger phrasing', () => {",
+              "  pm.expect(body.greeting).to.match(/Hello, stranger! \\(env: [a-z]+\\)/);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "greet - missing body is still well-formed",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Correlation-Id", "value": "{{correlationId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{msrBaseUrl}}/invoke/hello.world:greet",
+          "host": ["{{msrBaseUrl}}"],
+          "path": ["invoke", "hello.world:greet"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK (the flow tolerates a missing name)', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('greeting still includes the env tag', () => {",
+              "  pm.expect(body.greeting).to.match(/\\(env: [a-z]+\\)/);",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

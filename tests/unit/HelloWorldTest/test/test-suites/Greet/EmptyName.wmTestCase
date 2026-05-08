@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    EmptyName - hello.world:greet falls back to "stranger" when the
+    caller passes an empty name.
+
+    The flow's BRANCH on /name has explicit cases for $null and "" so
+    callers cannot accidentally produce "Hello, ! (env: ...)". This
+    case asserts that fallback. ENV_NAME is unset in unit tests, so
+    the env tag stays "unknown".
+-->
+<wmTestCase name="EmptyName" version="1.0">
+    <description>greet("") returns the "stranger" fallback greeting.</description>
+    <serviceUnderTest>hello.world:greet</serviceUnderTest>
+    <inputPipeline format="xml"><![CDATA[
+<IData>
+    <value name="name"></value>
+</IData>
+    ]]></inputPipeline>
+    <expectedOutput>
+        <assertion type="equals" path="greeting" expected="Hello, stranger! (env: unknown)"/>
+        <assertion type="equals" path="envName"  expected="unknown"/>
+    </expectedOutput>
+    <mocks/>
+</wmTestCase>

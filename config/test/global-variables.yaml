@@ -5,6 +5,10 @@
 # Identity field: variables[].key.
 
 variables:
+  - key: ENV_NAME
+    value: test
+    description: Stamps responses (e.g. HelloWorld:greet) with the test env tag.
+
   - key: LOG_LEVEL
     value: DEBUG
     description: Verbose logging during integration tests.

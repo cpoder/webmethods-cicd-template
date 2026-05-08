@@ -47,3 +47,8 @@ coverage/
 *.xml
 *.html
 reports/
+
+# IS package XML lives under packages/<P>/ns/.../{flow,node,...}.xml -- the
+# blanket *.xml rule above is targeted at test-output XML and would
+# silently swallow real IS assets, so re-include the packages/ tree.
+!packages/**/*.xml

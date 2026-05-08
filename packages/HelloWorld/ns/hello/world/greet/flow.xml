@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    hello.world:greet - flow service.
+
+    Pseudocode:
+        envName = wm.server:getGlobalVariableValue(key="ENV_NAME").value
+        BRANCH on /envName:
+            $null  -> MAP envName="unknown"
+            ""     -> MAP envName="unknown"
+            $default -> (use as-is)
+        BRANCH on /name:
+            $null  -> MAP name="stranger"
+            ""     -> MAP name="stranger"
+            $default -> (use as-is)
+        MAP greeting = "Hello, " + name + "! (env: " + envName + ")"
+        DROP /name (so caller-supplied name doesn't echo unintentionally)
+
+    The Designer-rendered flow.xml below mirrors that pseudocode. The
+    namespace prefixes (xmlns:flow, xmlns:wmaudit) match what Designer
+    11.x emits. Keep this file deterministic — re-saving in Designer
+    is fine; hand-edits should preserve element order so diffs stay
+    reviewable in PRs.
+-->
+<Flow version="3.0" cleanup="true">
+    <FLOW LABEL="greet" COMMENTS="Returns a greeting that includes the active env name.">
+        <INVOKE NAME="pub.flow:getGlobalVariable" LABEL="lookup ENV_NAME">
+            <MAPSET NAME="key">
+                <DATA>
+                    <Values>
+                        <value name="value">ENV_NAME</value>
+                    </Values>
+                </DATA>
+            </MAPSET>
+            <MAP-ACTION TYPE="invoke">
+                <MAP-COPY FROM="/value" TO="/envName"/>
+            </MAP-ACTION>
+        </INVOKE>
+
+        <BRANCH LABEL="default envName when missing" SWITCH="/envName">
+            <SEQUENCE LABEL="$null">
+                <MAP>
+                    <MAPSET NAME="envName">
+                        <DATA><Values><value name="value">unknown</value></Values></DATA>
+                    </MAPSET>
+                </MAP>
+            </SEQUENCE>
+            <SEQUENCE LABEL="">
+                <MAP>
+                    <MAPSET NAME="envName">
+                        <DATA><Values><value name="value">unknown</value></Values></DATA>
+                    </MAPSET>
+                </MAP>
+            </SEQUENCE>
+            <SEQUENCE LABEL="$default"/>
+        </BRANCH>
+
+        <BRANCH LABEL="default name when missing" SWITCH="/name">
+            <SEQUENCE LABEL="$null">
+                <MAP>
+                    <MAPSET NAME="name">
+                        <DATA><Values><value name="value">stranger</value></Values></DATA>
+                    </MAPSET>
+                </MAP>
+            </SEQUENCE>
+            <SEQUENCE LABEL="">
+                <MAP>
+                    <MAPSET NAME="name">
+                        <DATA><Values><value name="value">stranger</value></Values></DATA>
+                    </MAPSET>
+                </MAP>
+            </SEQUENCE>
+            <SEQUENCE LABEL="$default"/>
+        </BRANCH>
+
+        <MAP LABEL="format greeting">
+            <MAPSET NAME="greeting">
+                <DATA>
+                    <Values>
+                        <value name="value">Hello, %name%! (env: %envName%)</value>
+                    </Values>
+                </DATA>
+                <MAPSUBSTITUTE>
+                    <MAPSUBVAR FROM="/name"   TOKEN="%name%"/>
+                    <MAPSUBVAR FROM="/envName" TOKEN="%envName%"/>
+                </MAPSUBSTITUTE>
+            </MAPSET>
+        </MAP>
+    </FLOW>
+</Flow>

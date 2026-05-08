@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Folder node descriptor for hello/world/ - the dotted IS namespace
+    is hello.world. Container only; the actual service nodes live one
+    level deeper under greet/.
+-->
+<Values version="2.0">
+    <value name="node_type">interface</value>
+    <value name="package">HelloWorld</value>
+    <value name="ns_name">hello.world</value>
+</Values>
