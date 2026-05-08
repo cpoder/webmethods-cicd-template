@@ -10,13 +10,13 @@
 #
 #   docker build \
 #     -f docker/service/Dockerfile \
-#     --build-arg BASE_IMAGE=ghcr.io/<owner>/wm-msr-base:11.1.0-base-<sha7> \
+#     --build-arg BASE_IMAGE=ghcr.io/<owner>/wm-msr-base:12.1-base-<sha7> \
 #     --build-arg GIT_SHA=$(git rev-parse HEAD) \
 #     --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 #     -t wm-svc:dev .
 #
 # IMPORTANT: BASE_IMAGE must be a SHA-pinned tag emitted by the
-# base-image workflow (e.g. wm-msr-base:11.1.0-base-abcdef0). Never
+# base-image workflow (e.g. wm-msr-base:12.1-base-abcdef0). Never
 # pass a `*-latest` ref -- the whole point of the per-service image is
 # reproducibility against a frozen base.
 

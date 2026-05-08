@@ -8,35 +8,33 @@
 #
 # Build (prod):
 #   docker build --target prod \
-#     --build-arg MSR_BASE_IMAGE=cp.icr.io/cp/webmethods/integration/ibm-webmethods-integration-microservicesruntime \
-#     --build-arg MSR_VERSION=11.1.0 \
+#     --build-arg MSR_BASE_IMAGE=ibmwebmethods.azurecr.io/webmethods-microservicesruntime \
+#     --build-arg MSR_VERSION=12.1 \
 #     --build-arg WM_MCP_SERVER_URL=https://corporate-mirror/.../wm-mcp \
-#     -t wm-msr-base:11.1.0 docker/base
+#     -t wm-msr-base:12.1 docker/base
 #
 # Build (test):
 #   docker build --target test \
-#     --build-arg MSR_BASE_IMAGE=cp.icr.io/cp/webmethods/integration/ibm-webmethods-integration-microservicesruntime \
-#     --build-arg MSR_VERSION=11.1.0 \
+#     --build-arg MSR_BASE_IMAGE=ibmwebmethods.azurecr.io/webmethods-microservicesruntime \
+#     --build-arg MSR_VERSION=12.1 \
 #     --build-arg WM_MCP_SERVER_URL=https://corporate-mirror/.../wm-mcp \
 #     --build-arg WM_TEST_SUITE_INSTALLER_URL=https://corporate-mirror/.../wm-test-suite.zip \
-#     -t wm-msr-base-test:11.1.0 docker/base
+#     -t wm-msr-base-test:12.1 docker/base
 #
 # Build args MSR_BASE_IMAGE / MSR_VERSION / etc. default to the values
 # pinned in ../../versions.env. CI sources that file and forwards them
 # via --build-arg so this Dockerfile and the rest of the pipeline agree.
 #
-# Prereq: the IBM MSR image lives in IBM's entitled container registry
-# (cp.icr.io). Authenticate before building:
-#   docker login cp.icr.io
-#     Username: cp
-#     Password: <entitlement-key from https://myibm.ibm.com/products-services/containerlibrary>
-# The build's first FROM line will 401 without a valid login. Pulling
-# directly from Docker Hub is NOT supported -- the legacy
-# `ibmcom/webmethods-microservicesruntime` path returns object-not-found
-# and is not a working mirror.
+# Prereq: the IBM MSR image is hosted at ibmwebmethods.azurecr.io.
+# Mint a registry token at https://containers.webmethods.io (sign in
+# with IBMid; w3id SSO for IBM employees), then:
+#   docker login -u <token-name> -p <token-password> ibmwebmethods.azurecr.io
+# The build's first FROM line will 401 without a valid login. Tag
+# convention: :12.1 floats to the latest core fix; pin to :12.1.0.X
+# for reproducible production builds.
 
-ARG MSR_BASE_IMAGE=cp.icr.io/cp/webmethods/integration/ibm-webmethods-integration-microservicesruntime
-ARG MSR_VERSION=11.1.0
+ARG MSR_BASE_IMAGE=ibmwebmethods.azurecr.io/webmethods-microservicesruntime
+ARG MSR_VERSION=12.1
 ARG WM_MCP_SERVER_VERSION=v1.0.0
 
 # ---------------------------------------------------------------------
@@ -132,7 +130,7 @@ ARG MSR_VERSION
 ARG IMAGE_REVISION=unknown
 ARG JAVA_VERSION=17
 ARG ANT_VERSION=1.10.14
-ARG WM_TEST_SUITE_VERSION=11.1.0
+ARG WM_TEST_SUITE_VERSION=12.1
 # Required at build time for the test variant. No default: a missing
 # value should fail the build loudly (a wrong/stale URL silently
 # producing a broken test image is worse than a hard error).

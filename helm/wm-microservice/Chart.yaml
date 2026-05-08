@@ -14,7 +14,7 @@ type: application
 version: 0.1.0
 # appVersion tracks the MSR runtime version pinned in versions.env
 # (MSR_VERSION). When that changes, bump this string too.
-appVersion: "11.1.0"
+appVersion: "12.1"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/cpoder/wmcicd
 sources:

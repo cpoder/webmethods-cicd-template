@@ -22,7 +22,7 @@
 #     --certificate-identity \
 #       "https://github.com/<owner>/<repo>/.github/workflows/base-image.yml@refs/heads/main" \
 #     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-#     ghcr.io/<owner>/wm-msr-base:11.1.0-base-latest
+#     ghcr.io/<owner>/wm-msr-base:12.1-base-latest
 
 name: base-image
 

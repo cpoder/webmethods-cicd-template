@@ -121,7 +121,7 @@ services:
     # Default to the locally-built test image; CI overrides this with
     # the registry-hosted service image (which already has packages
     # baked in).
-    image: ${MSR_IMAGE:-wm-msr-base:11.1.0}
+    image: ${MSR_IMAGE:-wm-msr-base:12.1}
     environment:
       MSR_ADMIN_USER: ${MSR_ADMIN_USER:-Administrator}
       MSR_ADMIN_PASSWORD: ${MSR_ADMIN_PASSWORD:-manage}

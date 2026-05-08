@@ -137,13 +137,13 @@ Step-by-step:
 
 1. **PR #1: bump `MSR_VERSION`.**
    ```sh
-   git checkout -b feat/bump-msr-11.1.1
-   sed -i 's/^MSR_VERSION=.*/MSR_VERSION=11.1.1/' versions.env
-   git commit -am "chore: bump MSR_VERSION to 11.1.1"
+   git checkout -b feat/bump-msr-12.1.0.1
+   sed -i 's/^MSR_VERSION=.*/MSR_VERSION=12.1.0.1/' versions.env
+   git commit -am "chore: bump MSR_VERSION to 12.1.0.1"
    gh pr create --fill
    ```
    On merge, `base-image.yml` rebuilds and pushes
-   `ghcr.io/<owner>/wm-msr-base:11.1.1-base*` (the workflow's `paths:`
+   `ghcr.io/<owner>/wm-msr-base:12.1.0.1-base*` (the workflow's `paths:`
    filter triggers on `versions.env`). It also signs with `cosign`
    and attaches an SPDX SBOM via `cosign attest`.
 
@@ -153,7 +153,7 @@ Step-by-step:
      --certificate-identity \
        "https://github.com/<owner>/<repo>/.github/workflows/base-image.yml@refs/heads/main" \
      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-     ghcr.io/<owner>/wm-msr-base:11.1.1-base-latest
+     ghcr.io/<owner>/wm-msr-base:12.1.0.1-base-latest
    ```
 
 3. **PR #2: pull the new base into the service image.**

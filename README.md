@@ -9,15 +9,25 @@ This repo is published as a GitHub **template repository**. To start your own pi
 1. Click **Use this template → Create a new repository** on the GitHub page (or `gh repo create <you>/<repo> --template cpoder/webmethods-cicd-template --public`).
 2. Clone your new repo and replace the placeholders / fixtures listed below before merging anything to `main`.
 
-> **Hard prerequisite — IBM entitlement.** The MSR base image is pulled from IBM's entitled registry `cp.icr.io`. Before running `make image` (or letting CI do it), authenticate with your IBM entitlement key:
+> **Hard prerequisite — IBM webMethods Container Registry token.** The MSR base image is pulled from `ibmwebmethods.azurecr.io`. Before running `make image` (or letting CI do it):
 >
-> ```
-> docker login cp.icr.io
->   Username: cp
->   Password: <entitlement-key from https://myibm.ibm.com/products-services/containerlibrary>
-> ```
+> 1. Open https://containers.webmethods.io and sign in with your IBMid (w3id SSO for IBM employees).
+> 2. Follow the on-page prompt to **generate a registry token**. Save the token name and token password somewhere safe — the password isn't shown again.
+> 3. Authenticate Docker:
 >
-> In CI, set `cp.icr.io` registry credentials as repo/org secrets and add a `docker/login-action` step before the build (the existing workflows assume registry auth is already wired). Without entitlement the build will 401 at the `FROM` line. The same applies to the `WM_TEST_SUITE_INSTALLER_URL` in `versions.env` — point it at your IBM Passport download or your corporate mirror; there is no working public default.
+>    ```
+>    docker login -u <token-name> -p <token-password> ibmwebmethods.azurecr.io
+>    ```
+>
+> 4. Quick sanity-pull (fastest signal that the token works):
+>
+>    ```
+>    docker pull ibmwebmethods.azurecr.io/webmethods-microservicesruntime:12.1
+>    ```
+>
+> In CI, store the token name/password as repo or org secrets and add a `docker/login-action` step before the build job. Without a valid token the build will 401 at the `FROM` line. The same applies to `WM_TEST_SUITE_INSTALLER_URL` in `versions.env` — point it at your IBM Passport download or your corporate mirror; there is no working public default.
+>
+> Tag convention: `:12.1` always points to the latest core fix on the 12.1 line; pin to `:12.1.0.X` (e.g. `12.1.0.1` = Core Fix 1) for reproducible production builds.
 
 What to customise after cloning:
 
@@ -375,7 +385,8 @@ For questions or issues:
 
 ## Additional Resources
 
-- [IBM webMethods Integration Server documentation](https://www.ibm.com/docs/en/webmethods-integration/wm-integration-server/11.1.0)
+- [IBM webMethods Integration Server documentation](https://www.ibm.com/docs/en/webmethods-integration/wm-integration-server/12.1.0)
+- [IBM webMethods Container Registry portal](https://containers.webmethods.io) — sign in with IBMid, mint a registry token, then `docker login ibmwebmethods.azurecr.io`
 - [IBM webMethods Helm charts (reference patterns)](https://github.com/IBM/webmethods-helm-charts)
 - [GitHub Actions documentation](https://docs.github.com/en/actions)
 - [Docker best practices](https://docs.docker.com/develop/dev-best-practices/)

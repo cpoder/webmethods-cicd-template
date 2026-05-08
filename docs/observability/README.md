@@ -273,7 +273,7 @@ xdg-open https://grafana.example.com/d/wm-msr-starter
 ## 5. References
 
 - IBM webMethods MSR Prometheus endpoint:
-  https://www.ibm.com/docs/en/webmethods-integration/wm-integration-server/11.1.0
+  https://www.ibm.com/docs/en/webmethods-integration/wm-integration-server/12.1.0
 - Prometheus Operator ServiceMonitor:
   https://prometheus-operator.dev/docs/operator/api/#servicemonitor
 - Grafana dashboard JSON schema:
