@@ -52,10 +52,16 @@ fullnameOverride: ""
 # to land via Ingress / Gateway API in front of this. Admin port 5544 is
 # deliberately not exposed -- apply-config.sh runs through `kubectl exec`
 # / `kubectl port-forward` instead of through a published service port.
+#
+# The metrics port (9999) is published cluster-internally so the
+# ServiceMonitor (templates/servicemonitor.yaml) can target it. It is
+# safe on a ClusterIP service: no traffic enters the namespace from
+# outside unless an Ingress is added explicitly.
 service:
   type: ClusterIP
   port: 5555
   externalHttpsPort: 5443
+  metricsPort: 9999
 
 # ---- Probes -------------------------------------------------------------
 # Both probes hit the same wm.server:ping endpoint. wm.server:ping is in
@@ -160,6 +166,55 @@ secret:
   data: {}
   # SAG_IS_USER_ADMINISTRATOR_PASSWORD: ""
   # SAG_LICENSE_KEY: ""
+
+# ---- Metrics / Prometheus -----------------------------------------------
+# MSR exposes its built-in Prometheus endpoint on port 9999 at /metrics
+# when the extended setting `watt.server.prometheus.enabled=true` is
+# applied (config/base/extended-settings.properties handles that).
+#
+# `serviceMonitor.enabled=true` emits a monitoring.coreos.com/v1
+# ServiceMonitor selecting this chart's Service. It requires the
+# Prometheus Operator CRDs to be installed in the cluster -- on a
+# vanilla cluster the resource is silently skipped (templates guard
+# on the toggle, not on CRD discovery, so render is always safe).
+#
+# The starter Grafana dashboard at docs/observability/dashboard.json
+# uses the SoftwareAG-published MSR panel set; import it into Grafana
+# AFTER the ServiceMonitor lands its first scrape.
+metrics:
+  enabled: true
+  # Path is fixed by MSR; only override if you front MSR with a proxy
+  # that rewrites it.
+  path: /metrics
+  serviceMonitor:
+    enabled: false
+    # Namespace where the ServiceMonitor is created. Empty means the
+    # release namespace (recommended -- matches the Service it targets).
+    namespace: ""
+    # `release: prometheus` is the default selector for the
+    # kube-prometheus-stack chart. Override if your Prometheus
+    # instance uses a different `serviceMonitorSelector`.
+    additionalLabels:
+      release: prometheus
+    interval: 30s
+    scrapeTimeout: 10s
+    # Honour any pod-level labels rewriting; sample handler is
+    # purely additive so the chart stays portable.
+    relabelings: []
+    metricRelabelings: []
+    # Scheme is plain http -- MSR exposes the metrics endpoint
+    # unauthenticated on the loopback / cluster network. If you put
+    # MSR behind an internal TLS sidecar, switch to https + tlsConfig.
+    scheme: http
+    tlsConfig: {}
+    # Bearer-token auth is OFF by default; MSR emits the same metrics
+    # to anonymous callers. Set basicAuth.enabled=true and provide a
+    # secret if you've locked down /metrics with HTTP basic.
+    basicAuth:
+      enabled: false
+      secretName: ""
+      usernameKey: username
+      passwordKey: password
 
 # ---- ServiceAccount -----------------------------------------------------
 serviceAccount:

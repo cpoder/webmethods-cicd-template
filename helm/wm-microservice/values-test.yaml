@@ -46,3 +46,10 @@ secret:
 probes:
   liveness:
     initialDelaySeconds: 240
+
+# Prometheus Operator scrape -- test mirrors prod wiring.
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s

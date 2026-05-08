@@ -15,5 +15,11 @@ spec:
       targetPort: https
       protocol: TCP
       name: https
+    {{- if .Values.metrics.enabled }}
+    - port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+    {{- end }}
   selector:
     {{- include "wm-microservice.selectorLabels" . | nindent 4 }}

@@ -55,3 +55,11 @@ probes:
 
 # Lower grace period in dev so a broken build redeploys faster.
 terminationGracePeriodSeconds: 60
+
+# Prometheus Operator scrape -- dev cluster runs kube-prometheus-stack
+# with the default `release: prometheus` selector.
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s

@@ -266,6 +266,21 @@ See [`docs/security-gates.md`](docs/security-gates.md) for the
 inline + GitHub Advanced Security model and acceptance tests
 (A1: gitleaks, A2: trivy-fs, A3: image-security).
 
+### Observability
+
+MSR's built-in Prometheus endpoint is enabled via
+`watt.server.prometheus.enabled=true` in
+[`config/base/extended-settings.properties`](config/base/extended-settings.properties)
+and surfaced on container port `9999` at `/metrics`. The Helm chart's
+[`templates/servicemonitor.yaml`](helm/wm-microservice/templates/servicemonitor.yaml)
+emits a Prometheus-Operator `ServiceMonitor` (toggle
+`metrics.serviceMonitor.enabled=true` per env). A starter Grafana
+dashboard with JVM heap, flow-service-rate, JDBC-pool, and JMS-lag
+panels lives at
+[`docs/observability/dashboard.json`](docs/observability/dashboard.json).
+See [`docs/observability/README.md`](docs/observability/README.md) for
+import + scrape-verification recipes.
+
 ### Branch protection
 
 `main` is locked down by the rules codified in

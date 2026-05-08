@@ -56,6 +56,11 @@ spec:
             - name: https
               containerPort: {{ .Values.service.externalHttpsPort }}
               protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "wm-microservice.fullname" . }}

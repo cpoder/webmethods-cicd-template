@@ -1,0 +1,64 @@
+{{- /*
+ServiceMonitor for Prometheus Operator.
+
+Emitted only when:
+  - .Values.metrics.enabled        (the metrics port itself exists)
+  - .Values.metrics.serviceMonitor.enabled
+
+Requires the monitoring.coreos.com/v1 CRDs (kube-prometheus-stack
+or prometheus-operator). On a cluster without those CRDs the resource
+is simply skipped via the toggle -- the chart stays installable.
+
+Labels follow the kube-prometheus-stack convention: a `release` label
+matches the operator's default `serviceMonitorSelector`. Override via
+.Values.metrics.serviceMonitor.additionalLabels if your operator uses
+a different selector.
+*/}}
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "wm-microservice.fullname" . }}
+  {{- with .Values.metrics.serviceMonitor.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "wm-microservice.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "wm-microservice.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: {{ .Values.metrics.path | default "/metrics" }}
+      interval: {{ .Values.metrics.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout | default "10s" }}
+      scheme: {{ .Values.metrics.serviceMonitor.scheme | default "http" }}
+      {{- with .Values.metrics.serviceMonitor.tlsConfig }}
+      tlsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.metrics.serviceMonitor.basicAuth.enabled }}
+      basicAuth:
+        username:
+          name: {{ .Values.metrics.serviceMonitor.basicAuth.secretName | quote }}
+          key: {{ .Values.metrics.serviceMonitor.basicAuth.usernameKey | quote }}
+        password:
+          name: {{ .Values.metrics.serviceMonitor.basicAuth.secretName | quote }}
+          key: {{ .Values.metrics.serviceMonitor.basicAuth.passwordKey | quote }}
+      {{- end }}
+      {{- with .Values.metrics.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metrics.serviceMonitor.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
