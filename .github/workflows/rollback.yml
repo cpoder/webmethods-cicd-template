@@ -1,0 +1,364 @@
+# Manual rollback workflow.
+#
+# Used when an operator needs to roll a target environment back to a
+# specific previous commit -- typically when smoke passed but a latent
+# regression surfaces post-rollout, or to restore service after a
+# manual change went bad. The auto-rollback path inside cd.yml handles
+# the "smoke failed straight after deploy" case; this workflow is the
+# operator-driven counterpart for everything else.
+#
+# Usage from the runbook:
+#
+#   gh workflow run rollback.yml -f env=prod -f to_sha=<previous-sha>
+#
+# Inputs:
+#   env     (required, choice)  dev | test | prod
+#   to_sha  (optional, string)  Git SHA (full or 7-char) to roll back to.
+#                               When empty the workflow falls back to
+#                               scripts/deploy/rollback.sh's gh-api
+#                               lookup ("most recent successful deploy
+#                               whose image_ref differs from the live
+#                               one"), which is what auto-rollback uses.
+#
+# How to_sha is resolved to an image_ref:
+#   The same candidate ladder as cd.yml's `select-image`:
+#       ghcr.io/<owner>/wm-svc:main-<sha7>-<full>
+#       ghcr.io/<owner>/wm-svc:<MSR_VERSION>-svc-<sha7>
+#   The first existing tag wins. If neither exists the workflow fails
+#   before touching the environment -- the operator may have given a
+#   SHA that was never built (force-pushed PR, expired GHCR retention,
+#   etc.).
+#
+# Why a dedicated workflow and not a `cd.yml` re-run with image_ref
+# override?
+#   cd.yml's dispatch path runs the FULL pipeline (deploy + smoke +
+#   record-deployment); a rollback wants to re-run the previous image
+#   bit-exactly without re-applying current config. scripts/deploy/
+#   rollback.sh already encodes that contract (--skip-apply-config by
+#   default); this workflow is a thin GH-Actions front for it.
+
+name: rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Target environment'
+        type: choice
+        required: true
+        default: dev
+        options: [dev, test, prod]
+      to_sha:
+        description: 'Git SHA to roll back to (full or 7-char). Leave empty to use the last successful deployment from the GitHub Deployments API.'
+        required: false
+        type: string
+        default: ''
+      failed_image_ref:
+        description: 'Image ref currently live (excluded from auto-pick). Optional.'
+        required: false
+        type: string
+        default: ''
+      apply_config:
+        description: 'Re-run apply-config after rollback. Off by default; rollback wants the previous container BIT-EXACT, including its config.'
+        required: false
+        type: boolean
+        default: false
+
+# One rollback per env at a time. Don't cancel an in-flight rollback;
+# bailing halfway through can leave the deploy backend mid-swap.
+concurrency:
+  group: rollback-${{ github.event.inputs.env }}
+  cancel-in-progress: false
+
+# deployments: write   - record-deployment.sh + rollback audit trail
+# packages: read       - pull the (older) service image from GHCR
+permissions:
+  contents: read
+  packages: read
+  deployments: write
+  actions: read
+
+env:
+  REGISTRY: ghcr.io
+  SERVICE_IMAGE_NAME: ${{ github.repository_owner }}/wm-svc
+
+jobs:
+  # ===================================================================
+  # resolve-image
+  #
+  # If `to_sha` was given, walk the same candidate-tag ladder as
+  # cd.yml's `select-image` and emit the resolved image_ref.
+  # If `to_sha` is empty, emit nothing -- the deploy job lets
+  # rollback.sh fall back to the gh-api lookup.
+  # ===================================================================
+  resolve-image:
+    name: resolve-image
+    runs-on: ubuntu-latest
+    outputs:
+      image_ref: ${{ steps.resolve.outputs.image_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Log in to ${{ env.REGISTRY }}
+        if: github.event.inputs.to_sha != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Resolve image ref
+        id: resolve
+        env:
+          INPUT_TO_SHA: ${{ github.event.inputs.to_sha }}
+          IMAGE_REPO: ${{ env.REGISTRY }}/${{ env.SERVICE_IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${INPUT_TO_SHA}" ]]; then
+            echo "to_sha empty -- rollback.sh will fall back to gh deployment list lookup."
+            echo "image_ref=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Normalise: accept full or 7-char SHA. The candidate using
+          # the full SHA only makes sense if the operator gave one.
+          full="${INPUT_TO_SHA}"
+          short="${INPUT_TO_SHA:0:7}"
+
+          exists() {
+            docker buildx imagetools inspect "$1" >/dev/null 2>&1
+          }
+
+          candidates=(
+            "${IMAGE_REPO}:main-${short}-${full}"
+            "${IMAGE_REPO}:${MSR_VERSION}-svc-${short}"
+          )
+
+          chosen=""
+          for c in "${candidates[@]}"; do
+            echo "  trying ${c}"
+            if exists "${c}"; then
+              chosen="${c}"
+              break
+            fi
+          done
+          if [[ -z "${chosen}" ]]; then
+            echo "::error::no service image found for to_sha=${INPUT_TO_SHA}; tried: ${candidates[*]}"
+            echo "::error::the SHA may have never been built, the PR may have been force-pushed, or GHCR retention may have expired the tag."
+            exit 1
+          fi
+          echo "image_ref=${chosen}" >> "$GITHUB_OUTPUT"
+          echo "Resolved image_ref=${chosen}"
+
+  # ===================================================================
+  # rollback-dev
+  #
+  # Mirrors cd.yml's rollback-dev but reachable via workflow_dispatch
+  # rather than only on auto-fire after a smoke failure.
+  # ===================================================================
+  rollback-dev:
+    name: rollback-dev
+    needs: resolve-image
+    if: github.event.inputs.env == 'dev'
+    environment:
+      name: dev
+      url: ${{ vars.DEV_URL }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+      - name: Install Python deps
+        run: python3 -m pip install --quiet pyyaml
+      - name: Roll back
+        env:
+          ENV: dev
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          IMAGE_REF: ${{ needs.resolve-image.outputs.image_ref }}
+          FAILED_IMAGE_REF: ${{ github.event.inputs.failed_image_ref }}
+          APPLY_CONFIG: ${{ github.event.inputs.apply_config }}
+          TARGET_HOST: ${{ secrets.TARGET_HOST }}
+          TARGET_USER: ${{ secrets.TARGET_USER }}
+          TARGET_SSH_KEY: ${{ secrets.TARGET_SSH_KEY }}
+          TARGET_KUBECONFIG_B64: ${{ secrets.TARGET_KUBECONFIG_B64 }}
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          SAG_LICENSE_KEY_DEV: ${{ secrets.SAG_LICENSE_KEY_DEV }}
+        run: |
+          set -euo pipefail
+          args=(--env "${ENV}")
+          if [[ -n "${IMAGE_REF}" ]]; then
+            args+=(--image-ref "${IMAGE_REF}")
+          fi
+          if [[ -n "${FAILED_IMAGE_REF}" ]]; then
+            args+=(--failed-image-ref "${FAILED_IMAGE_REF}")
+          fi
+          if [[ "${APPLY_CONFIG}" == "true" ]]; then
+            args+=(--apply-config)
+          fi
+          bash scripts/deploy/rollback.sh "${args[@]}"
+
+      - name: Smoke check after rollback
+        env:
+          SMOKE_TARGET: ${{ vars.DEV_URL }}
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          SMOKE_REPORT: reports/smoke/junit.xml
+        run: bash tests/integration/smoke/run.sh
+
+      - name: Upload smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-rollback-dev
+          path: reports/smoke/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ===================================================================
+  # rollback-test
+  # ===================================================================
+  rollback-test:
+    name: rollback-test
+    needs: resolve-image
+    if: github.event.inputs.env == 'test'
+    environment:
+      name: test
+      url: ${{ vars.TEST_URL }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+      - name: Install Python deps
+        run: python3 -m pip install --quiet pyyaml
+      - name: Roll back
+        env:
+          ENV: test
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          IMAGE_REF: ${{ needs.resolve-image.outputs.image_ref }}
+          FAILED_IMAGE_REF: ${{ github.event.inputs.failed_image_ref }}
+          APPLY_CONFIG: ${{ github.event.inputs.apply_config }}
+          TARGET_HOST: ${{ secrets.TARGET_HOST }}
+          TARGET_USER: ${{ secrets.TARGET_USER }}
+          TARGET_SSH_KEY: ${{ secrets.TARGET_SSH_KEY }}
+          TARGET_KUBECONFIG_B64: ${{ secrets.TARGET_KUBECONFIG_B64 }}
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          SAG_LICENSE_KEY_TEST: ${{ secrets.SAG_LICENSE_KEY_TEST }}
+        run: |
+          set -euo pipefail
+          args=(--env "${ENV}")
+          if [[ -n "${IMAGE_REF}" ]]; then
+            args+=(--image-ref "${IMAGE_REF}")
+          fi
+          if [[ -n "${FAILED_IMAGE_REF}" ]]; then
+            args+=(--failed-image-ref "${FAILED_IMAGE_REF}")
+          fi
+          if [[ "${APPLY_CONFIG}" == "true" ]]; then
+            args+=(--apply-config)
+          fi
+          bash scripts/deploy/rollback.sh "${args[@]}"
+
+      - name: Smoke check after rollback
+        env:
+          SMOKE_TARGET: ${{ vars.TEST_URL }}
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          SMOKE_REPORT: reports/smoke/junit.xml
+        run: bash tests/integration/smoke/run.sh
+
+      - name: Upload smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-rollback-test
+          path: reports/smoke/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ===================================================================
+  # rollback-prod
+  #
+  # The `prod` GitHub Environment carries the same gates as a forward
+  # deploy: required reviewer + 10 min wait timer + branch=main policy
+  # (see scripts/setup-environments.sh). Rolling back a prod is a
+  # consequential action -- we deliberately do NOT short-circuit those
+  # gates.
+  # ===================================================================
+  rollback-prod:
+    name: rollback-prod
+    needs: resolve-image
+    if: github.event.inputs.env == 'prod'
+    environment:
+      name: prod
+      url: ${{ vars.PROD_URL }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pyyaml
+          curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
+            -o /tmp/helm.tgz
+          tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          sudo curl -fsSL -o /usr/local/bin/kubectl \
+            "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+          sudo chmod +x /usr/local/bin/kubectl
+      - name: Roll back
+        env:
+          ENV: prod
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          IMAGE_REF: ${{ needs.resolve-image.outputs.image_ref }}
+          FAILED_IMAGE_REF: ${{ github.event.inputs.failed_image_ref }}
+          APPLY_CONFIG: ${{ github.event.inputs.apply_config }}
+          TARGET_KUBECONFIG_B64: ${{ secrets.TARGET_KUBECONFIG_B64 }}
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          SAG_LICENSE_KEY_PROD: ${{ secrets.SAG_LICENSE_KEY_PROD }}
+        run: |
+          set -euo pipefail
+          args=(--env "${ENV}")
+          if [[ -n "${IMAGE_REF}" ]]; then
+            args+=(--image-ref "${IMAGE_REF}")
+          fi
+          if [[ -n "${FAILED_IMAGE_REF}" ]]; then
+            args+=(--failed-image-ref "${FAILED_IMAGE_REF}")
+          fi
+          if [[ "${APPLY_CONFIG}" == "true" ]]; then
+            args+=(--apply-config)
+          fi
+          bash scripts/deploy/rollback.sh "${args[@]}"
+
+      - name: Smoke check after rollback
+        env:
+          SMOKE_TARGET: ${{ vars.PROD_URL }}
+          MSR_ADMIN_USER: ${{ secrets.MSR_ADMIN_USER }}
+          MSR_ADMIN_PASSWORD: ${{ secrets.MSR_ADMIN_PASSWORD }}
+          SMOKE_REPORT: reports/smoke/junit.xml
+        run: bash tests/integration/smoke/run.sh
+
+      - name: Upload smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-rollback-prod
+          path: reports/smoke/**
+          if-no-files-found: warn
+          retention-days: 14

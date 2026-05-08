@@ -310,28 +310,18 @@ See [CODEOWNERS](CODEOWNERS) for automatic review assignment:
 - `/.github/**` - DevOps team
 - `/docker/**` - DevOps team
 
-## Troubleshooting
+## Operations & troubleshooting
 
-### Common Issues
+The on-call front door is [`docs/runbook.md`](docs/runbook.md) — it
+covers rollback, MSR version bumps, adding a package, adding an
+environment, and reading MSR logs against either backend. The
+symptom-oriented failure-mode catalogue lives at
+[`docs/troubleshooting.md`](docs/troubleshooting.md) (package
+install fails, config apply fails, smoke fails, CrashLoop, security
+gate failures, etc.).
 
-**Build fails with "package not found"**
-- Ensure `manifest.v3` exists and is properly formatted
-- Check that package dependencies are declared
-
-**Tests fail locally but pass in CI**
-- Verify Java version matches CI (Java 17)
-- Check Docker version compatibility
-- Ensure all environment variables are set
-
-**Docker image build fails**
-- Check base image availability
-- Verify network connectivity to artifact repository
-- Review `docker/service/Dockerfile` for syntax errors
-
-**Deployment fails**
-- Verify environment configuration files exist
-- Check credentials and access permissions
-- Review deployment logs in GitHub Actions
+For a deploy-failed-in-prod page, jump straight to
+[`docs/runbook.md` §0](docs/runbook.md#0-pager-response--deploy-failed-in-prod-what-do-i-do).
 
 ## Support
 
